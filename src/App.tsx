@@ -10,10 +10,13 @@ import { SkillsPanel } from './components/SkillsPanel';
 import { AgentsPanel } from './components/AgentsPanel';
 import { ConfigPanel } from './components/ConfigPanel';
 import { SyncConfirmDialog } from './components/SyncConfirmDialog';
+import { AccountPoolPanel } from './components/AccountPoolPanel';
+import { GatewayPanel } from './components/GatewayPanel';
+import { PoolMetadataDialog } from './components/PoolMetadataDialog';
 import { useAccounts } from './hooks/useAccounts';
 import { invoke } from '@tauri-apps/api/core';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AccountInfo, DEFAULT_SYNC_SETTINGS } from './types';
+import { AccountInfo, AccountPoolMetadata, DEFAULT_SYNC_SETTINGS, GatewaySettings } from './types';
 import { Card, Button } from './components/ui';
 
 // Empty state animation variants
@@ -44,7 +47,9 @@ function App() {
     settings,
     updateSettings,
     renameAccount,
-    bestCandidateId
+    bestCandidateId,
+    rankedCandidates,
+    updateAccountPoolMetadata
   } = useAccounts();
 
   const [currentView, setCurrentView] = useState<ViewType>('accounts');
@@ -53,6 +58,7 @@ function App() {
   const [isSyncOpen, setIsSyncOpen] = useState(false);
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [editingAccount, setEditingAccount] = useState<AccountInfo | null>(null);
+  const [poolEditingAccount, setPoolEditingAccount] = useState<AccountInfo | null>(null);
 
   const handleOpenDir = async () => {
     try {
@@ -71,6 +77,19 @@ function App() {
       sync: { ...(settings.sync || DEFAULT_SYNC_SETTINGS), lastSyncTime }
     });
     refresh();
+  };
+
+  const handleUpdateGateway = (updates: Partial<GatewaySettings>) => {
+    updateSettings({
+      gateway: {
+        ...settings.gateway,
+        ...updates,
+      },
+    });
+  };
+
+  const handleSavePoolMetadata = (accountId: string, metadata: AccountPoolMetadata) => {
+    updateAccountPoolMetadata(accountId, metadata);
   };
 
   return (
@@ -107,6 +126,17 @@ function App() {
                   <NavigationBar
                     onNavigate={handleNavigate}
                     onSync={() => setIsSyncOpen(true)}
+                  />
+                </div>
+
+                <div className="mb-4">
+                  <AccountPoolPanel
+                    accounts={accounts}
+                    rankedCandidates={rankedCandidates}
+                    autoSwitchEnabled={settings.enableAutoSwitch}
+                    autoSwitchThreshold={settings.autoSwitchThreshold}
+                    onToggleAutoSwitch={(enabled) => updateSettings({ enableAutoSwitch: enabled })}
+                    onEditAccountPool={(account) => setPoolEditingAccount(account)}
                   />
                 </div>
 
@@ -172,6 +202,7 @@ function App() {
                             account={account}
                             onSwitch={() => switchAccount(account.filePath)}
                             onEdit={() => setEditingAccount(account)}
+                            onEditPool={() => setPoolEditingAccount(account)}
                             onDelete={() => deleteAccount(account.filePath)}
                             renameAccount={renameAccount}
                             isBestCandidate={account.id === bestCandidateId}
@@ -241,6 +272,24 @@ function App() {
                 <ConfigPanel onBack={() => setCurrentView('accounts')} />
               </motion.div>
             )}
+
+            {currentView === 'gateway' && (
+              <motion.div
+                key="gateway"
+                className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-10rem)]"
+                variants={pageVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={{ duration: 0.2 }}
+              >
+                <GatewayPanel
+                  onBack={() => setCurrentView('accounts')}
+                  gateway={settings.gateway}
+                  onUpdateGateway={handleUpdateGateway}
+                />
+              </motion.div>
+            )}
           </AnimatePresence>
         </main>
 
@@ -269,6 +318,14 @@ function App() {
           webdavConfig={settings.webdav || { enabled: false, url: '', username: '', password: '', remotePath: '' }}
           syncSettings={settings.sync || DEFAULT_SYNC_SETTINGS}
           onSyncComplete={handleSyncComplete}
+        />
+
+        <PoolMetadataDialog
+          key={poolEditingAccount?.id || 'pool-metadata-dialog'}
+          isOpen={!!poolEditingAccount}
+          account={poolEditingAccount}
+          onClose={() => setPoolEditingAccount(null)}
+          onSave={handleSavePoolMetadata}
         />
       </div>
     </div>

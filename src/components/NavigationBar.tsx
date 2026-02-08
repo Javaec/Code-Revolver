@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { Button } from './ui';
 
-export type ViewType = 'accounts' | 'prompts' | 'skills' | 'agents' | 'config';
+export type ViewType = 'accounts' | 'prompts' | 'skills' | 'agents' | 'config' | 'gateway';
 
 interface NavItem {
   id: ViewType;
@@ -47,6 +47,17 @@ const navItems: NavItem[] = [
     icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+      </svg>
+    ),
+  },
+  {
+    id: 'gateway',
+    label: 'Gateway',
+    colorClass: 'text-blue-400',
+    gradientClass: 'from-blue-500/20 to-blue-600/10',
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />
       </svg>
     ),
   },

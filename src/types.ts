@@ -25,6 +25,26 @@ export interface AccountInfo {
     lastRefresh: string;
     lastUsageUpdate?: number;
     isTokenExpired?: boolean;
+    pool?: AccountPoolMetadata;
+}
+
+export interface AccountPoolMetadata {
+    priority: number;
+}
+
+export const DEFAULT_ACCOUNT_POOL_METADATA: AccountPoolMetadata = {
+    priority: 5,
+};
+
+export interface GatewaySettings {
+    enabled: boolean;
+    endpoint: string;
+    platformKey: string;
+    manualOAuthCallback: boolean;
+    oauthCallbackUrl: string;
+    keepAliveIntervalSec: number;
+    lastKeepAliveAt?: number;
+    status: 'idle' | 'online' | 'offline';
 }
 
 export interface ScanResult {
@@ -65,15 +85,29 @@ export interface AppSettings {
     checkInterval: number; // minutes
     enableAutoSwitch: boolean;
     autoSwitchThreshold: number; // percent remaining to trigger switch
+    accountPool: Record<string, AccountPoolMetadata>;
+    gateway: GatewaySettings;
     webdav?: WebDavConfig;
     sync?: SyncSettings;
 }
+
+export const DEFAULT_GATEWAY_SETTINGS: GatewaySettings = {
+    enabled: false,
+    endpoint: 'http://127.0.0.1:8787',
+    platformKey: '',
+    manualOAuthCallback: true,
+    oauthCallbackUrl: 'http://127.0.0.1:8787/oauth/callback',
+    keepAliveIntervalSec: 45,
+    status: 'idle',
+};
 
 export const DEFAULT_SETTINGS: AppSettings = {
     autoCheck: true,
     checkInterval: 30,
     enableAutoSwitch: false,
     autoSwitchThreshold: 5,
+    accountPool: {},
+    gateway: DEFAULT_GATEWAY_SETTINGS,
     webdav: {
         enabled: false,
         url: 'https://dav.jianguoyun.com/dav/',

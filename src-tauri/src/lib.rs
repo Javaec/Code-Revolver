@@ -538,11 +538,9 @@ async fn fetch_usage(file_path: String) -> Result<UsageInfo, String> {
     ];
 
     let mut final_response = None;
-    let mut last_error = String::new();
+    let mut attempt_errors: Vec<String> = Vec::new();
 
     for url in urls {
-        println!("Trying URL: {}", url);
-        
         let mut request = client
             .get(url)
             .header("Authorization", format!("Bearer {}", access_token))
@@ -558,22 +556,25 @@ async fn fetch_usage(file_path: String) -> Result<UsageInfo, String> {
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() {
-                    println!("Success with URL: {}", url);
                     final_response = Some(resp);
                     break;
                 } else {
-                    println!("Failed with URL: {} Status: {}", url, status);
-                    last_error = format!("Status: {}", status);
+                    attempt_errors.push(format!("{} -> HTTP {}", url, status));
                 }
             },
             Err(e) => {
-                println!("Network error with URL: {}: {}", url, e);
-                last_error = e.to_string();
+                attempt_errors.push(format!("{} -> {}", url, e));
             }
         }
     }
 
-    let response = final_response.ok_or_else(|| format!("All API requests failed. Last error: {}", last_error))?;
+    let response = final_response.ok_or_else(|| {
+        if attempt_errors.is_empty() {
+            "All API requests failed".to_string()
+        } else {
+            format!("All API requests failed: {}", attempt_errors.join(" | "))
+        }
+    })?;
     
     // Try to parse, compatible with different response formats
     let api_response: ApiUsageResponse = response.json().await

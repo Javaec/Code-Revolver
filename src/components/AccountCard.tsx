@@ -10,6 +10,7 @@ interface AccountCardProps {
   account: AccountInfo;
   onSwitch: () => void;
   onEdit: () => void;
+  onEditPool?: () => void;
   onDelete?: () => void;
   isBestCandidate?: boolean;
   isPrivacyMode?: boolean;
@@ -17,7 +18,7 @@ interface AccountCardProps {
   onRefresh?: () => void;
 }
 
-export function AccountCard({ account, onSwitch, onEdit, onDelete, isBestCandidate, isPrivacyMode, renameAccount, onRefresh }: AccountCardProps) {
+export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, isBestCandidate, isPrivacyMode, renameAccount, onRefresh }: AccountCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(account.name);
   const [, setTick] = useState(0);
@@ -153,6 +154,10 @@ export function AccountCard({ account, onSwitch, onEdit, onDelete, isBestCandida
           {planBadge.text}
         </Badge>
 
+        <Badge className="px-2 py-0.5 text-[10px] rounded-md font-medium border border-amber-500/30 bg-amber-500/10 text-amber-300">
+          P{account.pool?.priority ?? 5}
+        </Badge>
+
         {!isEditing && (
           <Button
             onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
@@ -268,9 +273,9 @@ export function AccountCard({ account, onSwitch, onEdit, onDelete, isBestCandida
                 }
               }}
               title="Delete Account"
-              variant="destructive"
+              variant="outline"
               size="icon"
-              className="h-8 w-8 bg-rose-500/15 text-rose-300 hover:bg-rose-500/30"
+              className="h-8 w-8 border-rose-300/25 bg-rose-300/10 text-rose-200 hover:bg-rose-300/20"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -287,11 +292,26 @@ export function AccountCard({ account, onSwitch, onEdit, onDelete, isBestCandida
               disabled={!!isTokenExpired}
               title="Switch to this account"
               size="icon"
-              className="h-8 w-8 bg-primary-500/20 text-primary-300 hover:bg-primary-500/35"
+              className="h-10 w-10 bg-primary-500/25 text-primary-200 hover:bg-primary-500/40 border border-primary-400/30"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
               </svg>
+            </Button>
+          )}
+
+          {onEditPool && (
+            <Button
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditPool();
+              }}
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px] border-cyan-500/25 text-cyan-300 hover:bg-cyan-500/10"
+              title="Configure switch priority"
+            >
+              Priority {account.pool?.priority ?? 5}
             </Button>
           )}
         </div>

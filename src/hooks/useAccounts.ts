@@ -1,6 +1,82 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { AccountInfo, ScanResult, UsageInfo, AppSettings, DEFAULT_SETTINGS, MutationResult } from '../types';
+import {
+    AccountInfo,
+    ScanResult,
+    UsageInfo,
+    AppSettings,
+    DEFAULT_SETTINGS,
+    MutationResult,
+    AccountPoolMetadata,
+    DEFAULT_ACCOUNT_POOL_METADATA,
+    GatewaySettings,
+    DEFAULT_GATEWAY_SETTINGS,
+} from '../types';
 import { invoke } from '@tauri-apps/api/core';
+
+const SETTINGS_STORAGE_KEY = 'code_revolver_settings';
+
+function normalizePoolMetadata(metadata?: unknown): AccountPoolMetadata {
+    const source = typeof metadata === 'object' && metadata !== null
+        ? metadata as Partial<AccountPoolMetadata>
+        : {};
+    const numericPriority = Number(
+        typeof metadata === 'number'
+            ? metadata
+            : source.priority ?? DEFAULT_ACCOUNT_POOL_METADATA.priority
+    );
+    const safePriority = Number.isFinite(numericPriority)
+        ? Math.max(1, Math.min(10, Math.round(numericPriority)))
+        : DEFAULT_ACCOUNT_POOL_METADATA.priority;
+
+    return {
+        priority: safePriority,
+    };
+}
+
+function normalizeGatewaySettings(gateway?: Partial<GatewaySettings>): GatewaySettings {
+    const keepAliveIntervalSec = Number(gateway?.keepAliveIntervalSec ?? DEFAULT_GATEWAY_SETTINGS.keepAliveIntervalSec);
+    const safeKeepAlive = Number.isFinite(keepAliveIntervalSec)
+        ? Math.max(15, Math.min(3600, Math.round(keepAliveIntervalSec)))
+        : DEFAULT_GATEWAY_SETTINGS.keepAliveIntervalSec;
+
+    return {
+        ...DEFAULT_GATEWAY_SETTINGS,
+        ...gateway,
+        endpoint: gateway?.endpoint?.trim() || DEFAULT_GATEWAY_SETTINGS.endpoint,
+        oauthCallbackUrl: gateway?.oauthCallbackUrl?.trim() || DEFAULT_GATEWAY_SETTINGS.oauthCallbackUrl,
+        keepAliveIntervalSec: safeKeepAlive,
+    };
+}
+
+function normalizeSettings(candidate?: Partial<AppSettings>): AppSettings {
+    const normalizedPool: Record<string, AccountPoolMetadata> = {};
+    const poolSource = candidate?.accountPool || {};
+    Object.entries(poolSource).forEach(([key, value]) => {
+        normalizedPool[key] = normalizePoolMetadata(value);
+    });
+
+    return {
+        ...DEFAULT_SETTINGS,
+        ...candidate,
+        accountPool: normalizedPool,
+        gateway: normalizeGatewaySettings(candidate?.gateway),
+        webdav: { ...DEFAULT_SETTINGS.webdav!, ...candidate?.webdav },
+        sync: { ...DEFAULT_SETTINGS.sync!, ...candidate?.sync },
+    };
+}
+
+function calculateSwitchScore(account: AccountInfo): number {
+    const priority = account.pool?.priority ?? DEFAULT_ACCOUNT_POOL_METADATA.priority;
+    const primaryUsage = account.usage?.primaryWindow?.usedPercent ?? 100;
+    const weeklyUsage = account.usage?.secondaryWindow?.usedPercent ?? 100;
+    const usageScore = 200 - primaryUsage - weeklyUsage;
+    const weeklyResetAt = account.usage?.secondaryWindow?.resetsAt ?? Number.MAX_SAFE_INTEGER;
+    const resetPenalty = weeklyResetAt === Number.MAX_SAFE_INTEGER
+        ? 10_000
+        : Math.max(0, weeklyResetAt - Date.now()) / (1000 * 60 * 60);
+
+    return priority * 1000 + usageScore * 5 - resetPenalty;
+}
 
 export function useAccounts() {
     const [accounts, setAccounts] = useState<AccountInfo[]>([]);
@@ -9,17 +85,39 @@ export function useAccounts() {
 
     const [settings, setSettings] = useState<AppSettings>(() => {
         try {
-            const saved = localStorage.getItem('code_revolver_settings');
-            return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+            const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
+            if (!saved) return normalizeSettings(DEFAULT_SETTINGS);
+            return normalizeSettings(JSON.parse(saved));
         } catch {
-            return DEFAULT_SETTINGS;
+            return normalizeSettings(DEFAULT_SETTINGS);
         }
     });
 
     const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
         setSettings(prev => {
-            const next = { ...prev, ...newSettings };
-            localStorage.setItem('code_revolver_settings', JSON.stringify(next));
+            const mergedPool = newSettings.accountPool
+                ? { ...prev.accountPool, ...newSettings.accountPool }
+                : prev.accountPool;
+            const mergedGateway = newSettings.gateway
+                ? { ...prev.gateway, ...newSettings.gateway }
+                : prev.gateway;
+            const mergedWebDav = newSettings.webdav
+                ? { ...(prev.webdav || DEFAULT_SETTINGS.webdav!), ...newSettings.webdav }
+                : prev.webdav;
+            const mergedSync = newSettings.sync
+                ? { ...(prev.sync || DEFAULT_SETTINGS.sync!), ...newSettings.sync }
+                : prev.sync;
+
+            const next = normalizeSettings({
+                ...prev,
+                ...newSettings,
+                accountPool: mergedPool,
+                gateway: mergedGateway,
+                webdav: mergedWebDav,
+                sync: mergedSync,
+            });
+
+            localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next));
             return next;
         });
     }, []);
@@ -35,15 +133,24 @@ export function useAccounts() {
 
             setAccountsDirState(result.accountsDir);
 
+            const migratedPoolEntries: Record<string, AccountPoolMetadata> = {};
             const accountsWithUsage = await Promise.all(
                 result.accounts.map(async (account) => {
+                    const rawPoolMetadata = settings.accountPool[account.id] || settings.accountPool[account.filePath];
+                    const pool = normalizePoolMetadata(rawPoolMetadata);
+
+                    if (!settings.accountPool[account.id] && settings.accountPool[account.filePath]) {
+                        migratedPoolEntries[account.id] = pool;
+                    }
+
                     try {
                         const usage = await fetchUsage(account.filePath);
                         return {
                             ...account,
                             usage,
                             lastUsageUpdate: Date.now(),
-                            isTokenExpired: false
+                            isTokenExpired: false,
+                            pool,
                         };
                     } catch (error: unknown) {
                         const errStr = String(error);
@@ -52,16 +159,24 @@ export function useAccounts() {
                             ...account,
                             usage: undefined,
                             lastUsageUpdate: Date.now(),
-                            isTokenExpired: isExpired
+                            isTokenExpired: isExpired,
+                            pool,
                         };
                     }
                 })
             );
 
-            // Sort: active accounts first, then by name
+            const hasPoolMigration = Object.keys(migratedPoolEntries).length > 0;
+            if (hasPoolMigration) {
+                updateSettings({ accountPool: migratedPoolEntries });
+            }
+
+            // Sort: active accounts first, then by priority, then by name
             accountsWithUsage.sort((a, b) => {
                 if (a.isActive && !b.isActive) return -1;
                 if (!a.isActive && b.isActive) return 1;
+                const priorityDiff = (b.pool?.priority || DEFAULT_ACCOUNT_POOL_METADATA.priority) - (a.pool?.priority || DEFAULT_ACCOUNT_POOL_METADATA.priority);
+                if (priorityDiff !== 0) return priorityDiff;
                 return a.name.localeCompare(b.name, 'en-US');
             });
 
@@ -72,7 +187,7 @@ export function useAccounts() {
         } finally {
             setLoading(false);
         }
-    }, [fetchUsage]);
+    }, [fetchUsage, settings.accountPool, updateSettings]);
 
     const switchAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
         try {
@@ -118,12 +233,8 @@ export function useAccounts() {
 
             if (candidates.length === 0) return;
 
-            // Sorting algorithm: Account with the earliest weekly reset time (Smallest ResetsAt)
-            candidates.sort((a, b) => {
-                const resetA = a.usage?.secondaryWindow?.resetsAt || Number.MAX_SAFE_INTEGER;
-                const resetB = b.usage?.secondaryWindow?.resetsAt || Number.MAX_SAFE_INTEGER;
-                return resetA - resetB;
-            });
+            // Ranking algorithm: prioritize metadata priority, then lower usage, then faster resets
+            candidates.sort((a, b) => calculateSwitchScore(b) - calculateSwitchScore(a));
 
             const bestAccount = candidates[0];
             // Perform switch
@@ -143,14 +254,23 @@ export function useAccounts() {
 
         if (candidates.length === 0) return null;
 
-        // Sort: solely based on earliest weekly reset time (Smallest ResetsAt)
-        candidates.sort((a, b) => {
-            const resetA = a.usage?.secondaryWindow?.resetsAt || Number.MAX_SAFE_INTEGER;
-            const resetB = b.usage?.secondaryWindow?.resetsAt || Number.MAX_SAFE_INTEGER;
-            return resetA - resetB;
-        });
+        candidates.sort((a, b) => calculateSwitchScore(b) - calculateSwitchScore(a));
 
         return candidates[0].id;
+    }, [accounts]);
+
+    const rankedCandidates = useMemo(() => {
+        const candidates = accounts.filter(acc => {
+            if (acc.isTokenExpired) return false;
+            if (acc.isActive) return false;
+            if ((acc.usage?.primaryWindow?.usedPercent || 0) >= 99) return false;
+            if ((acc.usage?.secondaryWindow?.usedPercent || 0) >= 99) return false;
+            return true;
+        });
+
+        return candidates
+            .sort((a, b) => calculateSwitchScore(b) - calculateSwitchScore(a))
+            .slice(0, 4);
     }, [accounts]);
 
     useEffect(() => {
@@ -259,6 +379,21 @@ export function useAccounts() {
         }
     }, [accountsDir]);
 
+    const updateAccountPoolMetadata = useCallback((accountId: string, metadata: Partial<AccountPoolMetadata>): MutationResult => {
+        const normalized = normalizePoolMetadata(metadata);
+        updateSettings({
+            accountPool: {
+                [accountId]: normalized,
+            },
+        });
+
+        setAccounts(prevAccounts => prevAccounts.map(acc => (
+            acc.id === accountId ? { ...acc, pool: normalized } : acc
+        )));
+
+        return { success: true };
+    }, [updateSettings]);
+
     return {
         accounts,
         accountsDir,
@@ -273,5 +408,7 @@ export function useAccounts() {
         deleteAccount,
         getAccountsDir,
         bestCandidateId,
+        rankedCandidates,
+        updateAccountPoolMetadata,
     };
 }
