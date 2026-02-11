@@ -243,7 +243,7 @@ export function useAccounts() {
     }, [settings.enableAutoSwitch, settings.autoSwitchThreshold, switchAccount]);
 
     // Calculate Best Candidate account
-    const bestCandidateId = useMemo(() => {
+    const bestCandidateFilePath = useMemo(() => {
         const candidates = accounts.filter(acc => {
             if (acc.isTokenExpired) return false;
             // Strict usage check. If account is > 99%, we probably shouldn't count it as "Best" available.
@@ -256,7 +256,7 @@ export function useAccounts() {
 
         candidates.sort((a, b) => calculateSwitchScore(b) - calculateSwitchScore(a));
 
-        return candidates[0].id;
+        return candidates[0].filePath;
     }, [accounts]);
 
     const rankedCandidates = useMemo(() => {
@@ -407,7 +407,7 @@ export function useAccounts() {
         addAccount,
         deleteAccount,
         getAccountsDir,
-        bestCandidateId,
+        bestCandidateFilePath,
         rankedCandidates,
         updateAccountPoolMetadata,
     };

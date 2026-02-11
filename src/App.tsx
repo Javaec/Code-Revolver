@@ -47,7 +47,7 @@ function App() {
     settings,
     updateSettings,
     renameAccount,
-    bestCandidateId,
+    bestCandidateFilePath,
     rankedCandidates,
     updateAccountPoolMetadata
   } = useAccounts();
@@ -185,7 +185,7 @@ function App() {
                     <AnimatePresence initial={false}>
                       {accounts.map((account, index) => (
                         <motion.div
-                          key={account.id}
+                          key={account.filePath}
                           layout
                           initial={{ opacity: 0, y: 12 }}
                           animate={{ opacity: 1, y: 0 }}
@@ -205,7 +205,7 @@ function App() {
                             onEditPool={() => setPoolEditingAccount(account)}
                             onDelete={() => deleteAccount(account.filePath)}
                             renameAccount={renameAccount}
-                            isBestCandidate={account.id === bestCandidateId}
+                            isBestCandidate={account.filePath === bestCandidateFilePath}
                             isPrivacyMode={isPrivacyMode}
                             onRefresh={refresh}
                           />

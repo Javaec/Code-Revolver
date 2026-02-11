@@ -100,6 +100,30 @@ fn get_codex_auth_file() -> PathBuf {
     home.join(".codex").join("auth.json")
 }
 
+fn paths_match(a: &PathBuf, b: &PathBuf) -> bool {
+    if a == b {
+        return true;
+    }
+
+    let a_canonical = fs::canonicalize(a).ok();
+    let b_canonical = fs::canonicalize(b).ok();
+    if let (Some(a_path), Some(b_path)) = (a_canonical, b_canonical) {
+        return a_path == b_path;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return a
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&b.to_string_lossy());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        a.to_string_lossy() == b.to_string_lossy()
+    }
+}
+
 // ========== JWT Parsing ==========
 
 fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
@@ -196,6 +220,11 @@ fn scan_accounts() -> Result<ScanResult, String> {
             
             // Only process .json files
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+
+            // Avoid listing the runtime auth mirror file as a separate profile.
+            if paths_match(&path, &codex_auth) {
                 continue;
             }
             
