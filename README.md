@@ -1,49 +1,60 @@
 # Code Revolver 🥁🔄
 
-> Revolver-style Codex account cylinder: load chambers, watch limits, rotate instantly.
+> **Revolver-style Codex account rotation**: load profiles, monitor limits, switch safely.
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)
-![Stack](https://img.shields.io/badge/stack-Tauri%20%2B%20React%20%2B%20shadcn%2Fui%20%2B%20Rust-1f2937)
+![Version](https://img.shields.io/badge/version-0.1.0-0ea5e9)
+![Stack](https://img.shields.io/badge/stack-Tauri%202%20%2B%20React%2019%20%2B%20TypeScript%20%2B%20Rust-1f2937)
+![Desktop](https://img.shields.io/badge/desktop-Windows%20%7C%20macOS-64748b)
 
-🌍 **Language / Язык:** [English 🇬🇧](#english-) | [Русский 🇷🇺](#russian-)
+🌐 **Language / Язык**: [English](#english-) | [Русский](#russian-)
+
+---
 
 ## English 🇬🇧
 
-### 🎯 What This Project Is
+### ✨ What Is Code Revolver
 
-**Code Revolver is first and foremost an account rotation engine.**  
-The app treats your Codex accounts like chambers in a revolver drum:
+Code Revolver is a desktop app that manages multiple Codex `auth.json` profiles and rotates them when quota is low or token state is invalid.
 
-- 🧩 Load many `auth.json` accounts
-- 📊 Track limit usage in real time
-- 🔁 Rotate to the best next account when needed
+### 🎯 Why It Exists
 
-### ⚙️ Revolver Flow
+When you work with multiple Codex accounts, manual rotation is error-prone.
+Code Revolver gives you:
 
-1. Add/import account files into the local pool.
-2. Track **5-hour** and **weekly** usage windows.
-3. Switch manually or let smart auto-switch rotate for you.
+- 🧩 a structured account pool
+- 📊 quota visibility (5h + weekly windows)
+- 🔁 fast manual switch and smart auto-switch
 
-### 🚀 Core Features
+### 🚀 Core Capabilities
 
-- 🥁 Revolver-style account pool management
-- 📈 Live quota and reset timers
-- 🤖 Smart auto-switch with threshold control (`1%` to `50%`)
-- ⚡ One-click active account replacement in `~/.codex/auth.json`
-- ☁️ Optional WebDAV sync between devices
-- 🎨 Unified UI based on shadcn/ui components
-- 🛠 Optional extras (secondary): Prompts, Skills, `AGENTS.MD`, `config.toml`
+| Capability | What You Get |
+|---|---|
+| 🥁 Account Pool | Multiple profiles with per-account priority |
+| ⚡ One-click Switch | Active profile sync to `~/.codex/auth.json` |
+| 🤖 Auto-switch | Threshold-based rotation (`1..50%`) |
+| 📈 Usage Insights | 5-hour + weekly used% and reset times |
+| 🛡 Token Safety | Expired/invalid accounts are filtered |
+| ☁️ Cloud Sync | Optional WebDAV sync for workspace assets |
+| 🧰 Extra Panels | Prompts, Skills, AGENTS, Gateway, Config |
 
-### 🖼 Current UI
+### 🔄 Revolver Flow
+
+1. 📥 Put account JSON files into your local accounts directory.
+2. 🔍 App scans profiles and usage status.
+3. 🧠 Best candidate is ranked by priority + quota health.
+4. 🎯 Manual switch or automatic rotation updates active auth file.
+
+### 🖼 UI Preview
 
 ![Code Revolver UI](image/README/Screenshot_1.jpg)
 
-### 🧪 Quick Start
+### 🧪 Install and Run
 
-Install:
-1. Download the latest `.msi` or `.exe` from Releases.
-2. Install and launch.
+Requirements:
+
+- Node.js 18+
+- Rust toolchain
 
 Development:
 
@@ -54,64 +65,97 @@ npm install
 npm run tauri dev
 ```
 
-Requirements:
-- Node.js 18+
-- Rust toolchain
+Production build:
 
-### 🧠 Can it be pure TypeScript?
+```bash
+npm run tauri build
+```
 
-- ❌ Not fully TS-only today: desktop backend commands are implemented via Tauri/Rust in `src-tauri/`.
+### 🛠 Useful Commands
 
-### 🗂 Project Map
+```bash
+npm run dev
+npm run lint
+npx tsc --noEmit
+npm run build
+npx vitest run
+cd src-tauri && cargo check
+```
 
-- `src/` - React + TypeScript UI
-- `src-tauri/` - Rust + Tauri backend
-- `.github/` - issue/PR templates and release workflow
-- `image/README/` - screenshots
+### 🧱 Project Structure
+
+```text
+src/                 React + TypeScript UI
+src-tauri/           Tauri backend (Rust commands)
+.github/             Issue + PR templates
+image/README/        README screenshots
+```
+
+### 🔐 Security Notes
+
+- Never commit real account tokens.
+- Use redacted/dummy `auth.json` in reports.
+- Double-check WebDAV settings before enabling sync.
+
+### 🩺 Troubleshooting
+
+- **Duplicate profile appears**: verify no accidental duplicate files in accounts directory.
+- **`401/403` usage errors**: refresh token and validate account auth state.
+- **WebDAV fails**: check URL, app password, remote path permissions.
 
 ### 🤝 Contributing
 
-See `CONTRIBUTING.md` and templates:
-- `.github/ISSUE_TEMPLATE/bug_report.md`
-- `.github/ISSUE_TEMPLATE/feature_request.md`
-- `.github/pull_request_template.md`
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [.github/ISSUE_TEMPLATE/bug_report.md](.github/ISSUE_TEMPLATE/bug_report.md)
+- [.github/ISSUE_TEMPLATE/feature_request.md](.github/ISSUE_TEMPLATE/feature_request.md)
+- [.github/pull_request_template.md](.github/pull_request_template.md)
+
+---
 
 ## Russian 🇷🇺
 
-### 🎯 Что Это За Проект
+### ✨ Что Такое Code Revolver
 
-**Code Revolver в первую очередь про барабанную ротацию аккаунтов Codex.**  
-Логика как у револьвера:
+Code Revolver — десктопное приложение для управления несколькими профилями Codex (`auth.json`) и безопасной ротации аккаунтов при низкой квоте или проблемах токена.
 
-- 🧩 Загружаем набор `auth.json` аккаунтов
-- 📊 Следим за лимитами в реальном времени
-- 🔁 Переключаемся на лучший следующий аккаунт
+### 🎯 Зачем Нужен Проект
 
-### ⚙️ Как Работает «Барабан»
+При работе с несколькими аккаунтами ручная ротация легко приводит к ошибкам.
+Code Revolver даёт:
 
-1. Добавляете/импортируете аккаунты в локальный пул.
-2. Мониторите окна лимитов: **5 часов** и **неделя**.
-3. Переключаете вручную или включаете умную авторотацию.
+- 🧩 структурированный пул аккаунтов
+- 📊 видимость лимитов (окна 5 часов и неделя)
+- 🔁 быстрое ручное и умное авто-переключение
 
-### 🚀 Основные Возможности
+### 🚀 Ключевые Возможности
 
-- 🥁 Пул аккаунтов с револьверным принципом
-- 📈 Живые проценты квот и таймеры сброса
-- 🤖 Умная авторотация с порогом (`1%` до `50%`)
-- ⚡ Быстрое переключение активного аккаунта в `~/.codex/auth.json`
-- ☁️ Опциональная WebDAV синхронизация
-- 🎨 Единый интерфейс на базе shadcn/ui компонентов
-- 🛠 Дополнительные (вторичные) инструменты: Prompts, Skills, `AGENTS.MD`, `config.toml`
+| Возможность | Что Это Даёт |
+|---|---|
+| 🥁 Пул аккаунтов | Несколько профилей + приоритет на аккаунт |
+| ⚡ Быстрое переключение | Обновление активного `~/.codex/auth.json` |
+| 🤖 Авто-переключение | Ротация по порогу (`1..50%`) |
+| 📈 Аналитика лимитов | Used% и таймеры сброса для 5ч/недели |
+| 🛡 Защита от плохих токенов | Невалидные профили исключаются |
+| ☁️ Облачная синхронизация | Опциональный WebDAV для данных проекта |
+| 🧰 Доп. панели | Prompts, Skills, AGENTS, Gateway, Config |
 
-### 🖼 Текущий Интерфейс
+### 🔄 Как Работает Ротация
+
+1. 📥 Поместите JSON-профили в директорию аккаунтов.
+2. 🔍 Приложение сканирует профили и usage.
+3. 🧠 Кандидаты ранжируются по приоритету и состоянию квоты.
+4. 🎯 Переключение вручную или авто-ротация обновляют активный auth-файл.
+
+### 🖼 Скриншот
 
 ![Code Revolver UI](image/README/Screenshot_1.jpg)
 
-### 🧪 Быстрый Старт
+### 🧪 Установка и Запуск
 
-Установка:
-1. Скачайте актуальный `.msi` или `.exe` из Releases.
-2. Установите и запустите.
+Требования:
+
+- Node.js 18+
+- Rust toolchain
 
 Разработка:
 
@@ -122,17 +166,40 @@ npm install
 npm run tauri dev
 ```
 
-Требования:
-- Node.js 18+
-- Rust toolchain
+Сборка:
 
-### 🧠 Можно ли полностью перейти на TS?
+```bash
+npm run tauri build
+```
 
-- ❌ Полностью без Rust пока нельзя: backend-команды и интеграция с ОС находятся в `src-tauri/`.
+### 🛠 Полезные Команды
 
-### 🗂 Структура
+```bash
+npm run dev
+npm run lint
+npx tsc --noEmit
+npm run build
+npx vitest run
+cd src-tauri && cargo check
+```
 
-- `src/` - интерфейс (React + TypeScript)
-- `src-tauri/` - backend (Rust + Tauri)
-- `.github/` - шаблоны и release workflow
-- `image/README/` - скриншоты
+### 🧱 Структура Проекта
+
+```text
+src/                 UI на React + TypeScript
+src-tauri/           Tauri backend на Rust
+.github/             Шаблоны issue и PR
+image/README/        Скриншоты
+```
+
+### 🔐 Безопасность
+
+- Не коммитьте реальные токены.
+- В репортах используйте только редактированные `auth.json`.
+- Перед включением sync проверьте WebDAV-конфиг.
+
+### 🩺 Диагностика
+
+- **Профиль дублируется**: проверьте директорию аккаунтов на лишние копии файлов.
+- **Ошибки `401/403`**: обновите токен и проверьте валидность профиля.
+- **WebDAV не работает**: проверьте URL, app password и права на удалённый путь.

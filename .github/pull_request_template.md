@@ -1,21 +1,57 @@
 ## 🧾 Summary / Суть
-Describe what changed and why.  
-Опишите, что изменено и зачем.
 
-## 🥁 Revolver Core Check / Проверка Барабанной Логики
-- [ ] Account add/import flow works / Добавление и импорт аккаунтов работают
-- [ ] Manual switch works / Ручное переключение работает
-- [ ] 5h + weekly limits display correctly / Лимиты 5ч + неделя отображаются корректно
-- [ ] Auto-switch logic validated (if changed) / Автопереключение проверено (если менялось)
+What changed and why?  
+Что изменено и зачем?
 
-## 🧪 Testing / Тесты
-- [ ] Not tested (explain) / Не тестировалось (объяснить)
-- [ ] Local build passed: `npm run build`
-- [ ] Additional checks / Дополнительные проверки: `...`
+---
 
-## ⚠️ Risks & Rollback / Риски и Откат
+## 🎯 Scope / Область изменений
+
+- [ ] 🥁 Core rotation logic / Основная логика ротации
+- [ ] 🖼 UI/UX only / Только UI/UX
+- [ ] 🦀 Tauri/Rust backend
+- [ ] ☁️ Sync/WebDAV
+- [ ] 📝 Documentation
+
+---
+
+## ✅ Revolver Core Validation / Проверка критической логики
+
+- [ ] 📥 Account add/import works / Добавление и импорт работают
+- [ ] 🔁 Manual switch works / Ручное переключение работает
+- [ ] 🧩 Active profile is not duplicated / Активный профиль не дублируется
+- [ ] 📊 5h + weekly usage is displayed correctly
+- [ ] 🤖 Auto-switch validated (if touched)
+
+---
+
+## 🧪 Test Evidence / Подтверждение тестов
+
+- [ ] `npm run lint`
+- [ ] `npx tsc --noEmit`
+- [ ] `npm run build`
+- [ ] `npx vitest run`
+- [ ] `cd src-tauri && cargo check`
+- [ ] ❗ Not tested (reason below) / Не тестировалось (причина ниже)
+
+Manual checks summary / Ручная проверка:
+
+---
+
+## ⚠️ Risks and Rollback / Риски и откат
+
 - Main risks / Основные риски:
-- Rollback plan / План отката:
+- Rollback steps / Шаги отката:
 
-## 🔗 Related / Связанные Материалы
-Issue/discussion links / Ссылки на issue или обсуждение.
+---
+
+## 📸 Screenshots or Logs / Скриншоты или логи
+
+Before/after screenshots or relevant logs (if needed).  
+Скриншоты до/после или релевантные логи (если нужно).
+
+---
+
+## 🔗 Linked Issues / Связанные задачи
+
+Closes/Fixes/Related: #
