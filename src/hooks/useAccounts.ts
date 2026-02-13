@@ -78,6 +78,37 @@ function calculateSwitchScore(account: AccountInfo): number {
     return priority * 1000 + usageScore * 5 - resetPenalty;
 }
 
+function getWeeklyUsagePercent(account: AccountInfo): number {
+    return account.usage?.secondaryWindow?.usedPercent ?? 100;
+}
+
+function getWeeklyResetEtaMs(account: AccountInfo, nowMs: number): number {
+    const resetsAt = account.usage?.secondaryWindow?.resetsAt;
+    if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) {
+        return Number.MAX_SAFE_INTEGER;
+    }
+
+    return Math.max(0, resetsAt - nowMs);
+}
+
+function getWeeklyGroupOrder(account: AccountInfo): number {
+    const weekly = getWeeklyUsagePercent(account);
+    return weekly > 90 ? 1 : 0;
+}
+
+function compareAccountsByWeeklyReset(a: AccountInfo, b: AccountInfo, nowMs: number): number {
+    const groupDiff = getWeeklyGroupOrder(a) - getWeeklyGroupOrder(b);
+    if (groupDiff !== 0) return groupDiff;
+
+    const etaDiff = getWeeklyResetEtaMs(a, nowMs) - getWeeklyResetEtaMs(b, nowMs);
+    if (etaDiff !== 0) return etaDiff;
+
+    const weeklyDiff = getWeeklyUsagePercent(a) - getWeeklyUsagePercent(b);
+    if (weeklyDiff !== 0) return weeklyDiff;
+
+    return a.name.localeCompare(b.name, 'en-US');
+}
+
 export function useAccounts() {
     const [accounts, setAccounts] = useState<AccountInfo[]>([]);
     const [accountsDir, setAccountsDirState] = useState<string>('');
@@ -171,14 +202,11 @@ export function useAccounts() {
                 updateSettings({ accountPool: migratedPoolEntries });
             }
 
-            // Sort: active accounts first, then by priority, then by name
-            accountsWithUsage.sort((a, b) => {
-                if (a.isActive && !b.isActive) return -1;
-                if (!a.isActive && b.isActive) return 1;
-                const priorityDiff = (b.pool?.priority || DEFAULT_ACCOUNT_POOL_METADATA.priority) - (a.pool?.priority || DEFAULT_ACCOUNT_POOL_METADATA.priority);
-                if (priorityDiff !== 0) return priorityDiff;
-                return a.name.localeCompare(b.name, 'en-US');
-            });
+            // Sort for account list:
+            // 1) Weekly <= 90% first, Weekly > 90% last
+            // 2) Inside each group, shorter weekly reset ETA first
+            const nowMs = Date.now();
+            accountsWithUsage.sort((a, b) => compareAccountsByWeeklyReset(a, b, nowMs));
 
             setAccounts(accountsWithUsage);
 
