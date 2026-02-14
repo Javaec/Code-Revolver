@@ -88,7 +88,19 @@ function getWeeklyResetEtaMs(account: AccountInfo, nowMs: number): number {
         return Number.MAX_SAFE_INTEGER;
     }
 
-    return Math.max(0, resetsAt - nowMs);
+    // Backend provides reset timestamp in Unix seconds in most cases.
+    const resetAtMs = resetsAt < 10_000_000_000 ? resetsAt * 1000 : resetsAt;
+    return Math.max(0, resetAtMs - nowMs);
+}
+
+function getWeeklyResetRemainingDays(account: AccountInfo, nowMs: number): number {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const etaMs = getWeeklyResetEtaMs(account, nowMs);
+    if (!Number.isFinite(etaMs)) {
+        return Number.MAX_SAFE_INTEGER;
+    }
+
+    return Math.floor(etaMs / DAY_MS);
 }
 
 function getWeeklyGroupOrder(account: AccountInfo): number {
@@ -100,11 +112,8 @@ function compareAccountsByWeeklyReset(a: AccountInfo, b: AccountInfo, nowMs: num
     const groupDiff = getWeeklyGroupOrder(a) - getWeeklyGroupOrder(b);
     if (groupDiff !== 0) return groupDiff;
 
-    const etaDiff = getWeeklyResetEtaMs(a, nowMs) - getWeeklyResetEtaMs(b, nowMs);
-    if (etaDiff !== 0) return etaDiff;
-
-    const weeklyDiff = getWeeklyUsagePercent(a) - getWeeklyUsagePercent(b);
-    if (weeklyDiff !== 0) return weeklyDiff;
+    const dayDiff = getWeeklyResetRemainingDays(a, nowMs) - getWeeklyResetRemainingDays(b, nowMs);
+    if (dayDiff !== 0) return dayDiff;
 
     return a.name.localeCompare(b.name, 'en-US');
 }
@@ -204,7 +213,7 @@ export function useAccounts() {
 
             // Sort for account list:
             // 1) Weekly <= 90% first, Weekly > 90% last
-            // 2) Inside each group, shorter weekly reset ETA first
+            // 2) Inside each group, smaller weekly reset day count first
             const nowMs = Date.now();
             accountsWithUsage.sort((a, b) => compareAccountsByWeeklyReset(a, b, nowMs));
 
