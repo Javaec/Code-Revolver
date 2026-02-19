@@ -35,6 +35,8 @@ pub struct AccountInfo {
     pub is_active: bool,
     #[serde(rename = "filePath")]
     pub file_path: String,    // Full path to the auth file
+    #[serde(rename = "authUpdatedAt")]
+    pub auth_updated_at: i64, // Unix ms from auth.json file modified time
     #[serde(rename = "expiresAt")]
     pub expires_at: Option<i64>, // Token expiration timestamp
     #[serde(rename = "lastRefresh")]
@@ -228,6 +230,15 @@ fn scan_accounts() -> Result<ScanResult, String> {
                 continue;
             }
             
+            let metadata = fs::metadata(&path)
+                .map_err(|e| format!("Failed to read account file metadata: {}", e))?;
+            let modified_at = metadata
+                .modified()
+                .map_err(|e| format!("Failed to read account file modified time: {}", e))?
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| format!("Failed to compute account file modified time: {}", e))?
+                .as_millis() as i64;
+
             // Read and parse
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(auth) = serde_json::from_str::<CodexAuthFile>(&content) {
@@ -250,6 +261,7 @@ fn scan_accounts() -> Result<ScanResult, String> {
                         subscription_end,
                         is_active,
                         file_path: path.to_string_lossy().to_string(),
+                        auth_updated_at: modified_at,
                         expires_at,
                         last_refresh: auth.last_refresh.clone(),
                     });

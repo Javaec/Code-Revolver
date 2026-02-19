@@ -49,7 +49,8 @@ function App() {
     renameAccount,
     bestCandidateFilePath,
     rankedCandidates,
-    updateAccountPoolMetadata
+    updateAccountPoolMetadata,
+    usageLoadingByPath
   } = useAccounts();
 
   const [currentView, setCurrentView] = useState<ViewType>('accounts');
@@ -181,7 +182,7 @@ function App() {
                     </Card>
                   </motion.div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <AnimatePresence initial={false}>
                       {accounts.map((account, index) => (
                         <motion.div
@@ -207,6 +208,7 @@ function App() {
                             renameAccount={renameAccount}
                             isBestCandidate={account.filePath === bestCandidateFilePath}
                             isPrivacyMode={isPrivacyMode}
+                            isUsageLoading={usageLoadingByPath[account.filePath] ?? false}
                             onRefresh={refresh}
                           />
                         </motion.div>

@@ -14,6 +14,26 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 
 const SETTINGS_STORAGE_KEY = 'code_revolver_settings';
+const USAGE_CACHE_KEY = 'code_revolver_usage_cache';
+
+type UsageCacheEntry = {
+    usage: UsageInfo;
+    cachedAt: number;
+};
+
+function loadUsageCache(): Record<string, UsageCacheEntry> {
+    try {
+        const raw = localStorage.getItem(USAGE_CACHE_KEY);
+        if (!raw) return {};
+        return JSON.parse(raw) as Record<string, UsageCacheEntry>;
+    } catch {
+        return {};
+    }
+}
+
+function saveUsageCache(cache: Record<string, UsageCacheEntry>): void {
+    localStorage.setItem(USAGE_CACHE_KEY, JSON.stringify(cache));
+}
 
 function normalizePoolMetadata(metadata?: unknown): AccountPoolMetadata {
     const source = typeof metadata === 'object' && metadata !== null
@@ -122,6 +142,7 @@ export function useAccounts() {
     const [accounts, setAccounts] = useState<AccountInfo[]>([]);
     const [accountsDir, setAccountsDirState] = useState<string>('');
     const [loading, setLoading] = useState(true);
+    const [usageLoadingByPath, setUsageLoadingByPath] = useState<Record<string, boolean>>({});
 
     const [settings, setSettings] = useState<AppSettings>(() => {
         try {
@@ -172,52 +193,81 @@ export function useAccounts() {
             const result = await invoke<ScanResult>('scan_accounts');
 
             setAccountsDirState(result.accountsDir);
+            const usageCache = loadUsageCache();
 
             const migratedPoolEntries: Record<string, AccountPoolMetadata> = {};
-            const accountsWithUsage = await Promise.all(
-                result.accounts.map(async (account) => {
-                    const rawPoolMetadata = settings.accountPool[account.id] || settings.accountPool[account.filePath];
-                    const pool = normalizePoolMetadata(rawPoolMetadata);
+            const baseAccounts = result.accounts.map((account) => {
+                const rawPoolMetadata = settings.accountPool[account.id] || settings.accountPool[account.filePath];
+                const pool = normalizePoolMetadata(rawPoolMetadata);
 
-                    if (!settings.accountPool[account.id] && settings.accountPool[account.filePath]) {
-                        migratedPoolEntries[account.id] = pool;
-                    }
+                if (!settings.accountPool[account.id] && settings.accountPool[account.filePath]) {
+                    migratedPoolEntries[account.id] = pool;
+                }
 
-                    try {
-                        const usage = await fetchUsage(account.filePath);
-                        return {
-                            ...account,
-                            usage,
-                            lastUsageUpdate: Date.now(),
-                            isTokenExpired: false,
-                            pool,
-                        };
-                    } catch (error: unknown) {
-                        const errStr = String(error);
-                        const isExpired = errStr.includes('401') || errStr.includes('403') || errStr.includes('Status: 401') || errStr.includes('Status: 403');
-                        return {
-                            ...account,
-                            usage: undefined,
-                            lastUsageUpdate: Date.now(),
-                            isTokenExpired: isExpired,
-                            pool,
-                        };
-                    }
-                })
-            );
+                const cached = usageCache[account.filePath];
+                return {
+                    ...account,
+                    usage: cached?.usage,
+                    lastUsageUpdate: cached?.cachedAt ?? Date.now(),
+                    isTokenExpired: false,
+                    pool,
+                };
+            });
 
             const hasPoolMigration = Object.keys(migratedPoolEntries).length > 0;
             if (hasPoolMigration) {
                 updateSettings({ accountPool: migratedPoolEntries });
             }
+            saveUsageCache(usageCache);
 
-            // Sort for account list:
-            // 1) Weekly <= 90% first, Weekly > 90% last
-            // 2) Inside each group, smaller weekly reset day count first
             const nowMs = Date.now();
-            accountsWithUsage.sort((a, b) => compareAccountsByWeeklyReset(a, b, nowMs));
+            baseAccounts.sort((a, b) => compareAccountsByWeeklyReset(a, b, nowMs));
+            setAccounts(baseAccounts);
 
-            setAccounts(accountsWithUsage);
+            const loadingMap: Record<string, boolean> = {};
+            baseAccounts.forEach(acc => {
+                loadingMap[acc.filePath] = true;
+            });
+            setUsageLoadingByPath(loadingMap);
+
+            baseAccounts.forEach(acc => {
+                fetchUsage(acc.filePath)
+                    .then((usage) => {
+                        usageCache[acc.filePath] = {
+                            usage,
+                            cachedAt: Date.now(),
+                        };
+                        saveUsageCache(usageCache);
+                        setAccounts(prev => {
+                            const next = prev.map(item => (
+                                item.filePath === acc.filePath
+                                    ? { ...item, usage, lastUsageUpdate: Date.now(), isTokenExpired: false }
+                                    : item
+                            ));
+                            const now = Date.now();
+                            next.sort((a, b) => compareAccountsByWeeklyReset(a, b, now));
+                            return next;
+                        });
+                    })
+                    .catch((error: unknown) => {
+                        const errStr = String(error);
+                        const isExpired = errStr.includes('401') || errStr.includes('403') || errStr.includes('Status: 401') || errStr.includes('Status: 403');
+                        const cached = usageCache[acc.filePath];
+                        setAccounts(prev => {
+                            const next = prev.map(item => (
+                                item.filePath === acc.filePath
+                                    ? { ...item, usage: cached?.usage, lastUsageUpdate: cached?.cachedAt ?? Date.now(), isTokenExpired: isExpired }
+                                    : item
+                            ));
+                            const now = Date.now();
+                            next.sort((a, b) => compareAccountsByWeeklyReset(a, b, now));
+                            return next;
+                        });
+                    })
+                    .finally(() => {
+                        setUsageLoadingByPath(prev => ({ ...prev, [acc.filePath]: false }));
+                    });
+            });
 
         } catch (error) {
             console.error('Failed to scan accounts:', error);
@@ -435,6 +485,7 @@ export function useAccounts() {
         accounts,
         accountsDir,
         loading,
+        usageLoadingByPath,
         settings,
         updateSettings,
         refresh,

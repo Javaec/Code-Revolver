@@ -14,11 +14,12 @@ interface AccountCardProps {
   onDelete?: () => void;
   isBestCandidate?: boolean;
   isPrivacyMode?: boolean;
+  isUsageLoading?: boolean;
   renameAccount: (oldPath: string, newName: string) => Promise<MutationResult>;
   onRefresh?: () => void;
 }
 
-export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, isBestCandidate, isPrivacyMode, renameAccount, onRefresh }: AccountCardProps) {
+export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, isBestCandidate, isPrivacyMode, isUsageLoading, renameAccount, onRefresh }: AccountCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(account.name);
   const [, setTick] = useState(0);
@@ -37,10 +38,10 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
   const cardVariant = getAccountCardVariant(account.isActive, !!isTokenExpired);
   const planBadge = getPlanBadgeClasses(account.planType);
   const cardClasses = cardVariant === 'danger'
-    ? 'border-rose-500/35 bg-rose-900/10'
+    ? 'border-rose-500/35 bg-gradient-to-r from-rose-900/20 to-slate-900/50'
     : cardVariant === 'active'
-      ? 'border-primary-400/45 shadow-glow bg-gradient-to-r from-primary-900/20 to-slate-900/40'
-      : 'border-white/15 bg-slate-900/40';
+      ? 'border-primary-400/45 shadow-glow bg-gradient-to-r from-primary-900/20 to-slate-900/50'
+      : 'border-white/15 bg-gradient-to-r from-slate-900/45 to-slate-900/60';
 
   const formatSubscription = (date: string | null) => {
     if (!date) return 'Unknown';
@@ -66,6 +67,25 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
       second: '2-digit'
     });
   };
+
+  const formatAuthUpdated = (timestampMs: number) => {
+    const d = new Date(timestampMs);
+    return d.toLocaleString('en-US', {
+      hour12: false,
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+  const authUpdatedAtMs = account.authUpdatedAt;
+  const expireAtMs = authUpdatedAtMs + TWO_WEEKS_MS;
+  const expireAtSec = Math.floor(expireAtMs / 1000);
+  const expireElapsed = Math.max(0, Date.now() - authUpdatedAtMs);
+  const expirePercent = Math.min(100, Math.max(0, (expireElapsed / TWO_WEEKS_MS) * 100));
+  const needsRelogin = expirePercent >= 95;
 
   const handleRename = async () => {
     if (newName.trim() && newName !== account.name) {
@@ -109,7 +129,7 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
 
   return (
     <Card
-      className={`group p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 ${cardClasses}`}
+      className={`group p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-white/25 ${cardClasses}`}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
           return;
@@ -118,7 +138,7 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
       }}
     >
       {/* Header Row: Name + Badges */}
-      <div className="flex items-center gap-2 flex-wrap mb-3">
+      <div className="flex items-center gap-1.5 flex-wrap mb-2">
         {account.isActive && (
           <motion.span
             className="w-2 h-2 rounded-full bg-primary-500 shadow-glow"
@@ -133,7 +153,7 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
               type="text"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              className="h-7 w-[120px] border-white/20 bg-slate-900/70 px-2 py-0.5 text-sm font-bold text-white"
+              className="h-6 w-[110px] border-white/20 bg-slate-900/70 px-2 py-0.5 text-xs font-semibold text-white"
               autoFocus
               onKeyDown={handleKeyDown}
               onBlur={handleRename}
@@ -144,17 +164,17 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
             className="flex items-center gap-1.5 group/title cursor-pointer"
             onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
           >
-            <h3 className={`font-bold text-base text-white truncate max-w-[120px] transition-all ${isPrivacyMode ? 'blur-md select-none' : ''}`} title={account.name}>
+            <h3 className={`font-bold text-[15px] text-white truncate max-w-[112px] transition-all ${isPrivacyMode ? 'blur-md select-none' : ''}`} title={account.name}>
               {account.name}
             </h3>
           </div>
         )}
 
-        <Badge className={`px-2 py-0.5 text-[10px] rounded-md font-bold border ${planBadge.classes}`}>
+        <Badge className={`px-1.5 py-0.5 text-[9px] rounded-md font-bold border ${planBadge.classes}`}>
           {planBadge.text}
         </Badge>
 
-        <Badge className="px-2 py-0.5 text-[10px] rounded-md font-medium border border-amber-500/30 bg-amber-500/10 text-amber-300">
+        <Badge className="px-1.5 py-0.5 text-[9px] rounded-md font-medium border border-amber-500/30 bg-amber-500/10 text-amber-300">
           P{account.pool?.priority ?? 5}
         </Badge>
 
@@ -163,10 +183,10 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
             onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
             variant="ghost"
             size="icon"
-            className="h-6 w-6 text-slate-500 hover:text-white"
+            className="h-5 w-5 text-slate-500 hover:text-white"
             title="Rename Profile"
           >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
             </svg>
           </Button>
@@ -197,51 +217,73 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
         )}
       </div>
 
-      {/* Content: Left Info | Center Progress | Right Buttons */}
-      <div className="flex items-center gap-4">
+      {/* Content: Left Info | Center Timing | Right Controls */}
+      <div className="flex items-start gap-3">
         {/* Left: Account Info */}
-        <div className="flex flex-col space-y-1.5 min-w-0 flex-1">
+        <div className="flex flex-col space-y-1 min-w-0 w-[220px]">
           <div className="flex items-center gap-2 text-slate-400">
-            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
-            <span className={`truncate text-xs select-all transition-all ${isPrivacyMode ? 'blur-md select-none' : ''}`} title={account.email}>{account.email}</span>
+            <span className={`truncate text-[11px] select-all transition-all ${isPrivacyMode ? 'blur-md select-none' : ''}`} title={account.email}>{account.email}</span>
           </div>
 
           <div className="flex items-center gap-2 text-slate-400">
-            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span className="text-xs truncate">{formatQueryTime(account.lastUsageUpdate)}</span>
-          </div>
-
-          <div className="flex items-center gap-2 text-slate-400">
-            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
-            <span className={`text-xs truncate ${isTokenExpired ? 'text-rose-400' : ''}`}>
+            <span className={`text-[11px] truncate ${isTokenExpired ? 'text-rose-400' : ''}`}>
               {formatSubscription(account.subscriptionEnd)}
             </span>
           </div>
         </div>
 
-        {/* Center: Linear Progress Bars */}
-        <div className="flex flex-col gap-3 w-40 flex-shrink-0">
-          <LinearProgress
-            value={account.usage?.primaryWindow?.usedPercent ?? 0}
-            label="5H Limit"
-            subLabel={formatRelativeTime(account.usage?.primaryWindow?.resetsAt)}
-          />
-          <LinearProgress
-            value={account.usage?.secondaryWindow?.usedPercent ?? 0}
-            label="Weekly"
-            subLabel={formatRelativeTime(account.usage?.secondaryWindow?.resetsAt)}
-          />
+        {/* Center: Timing */}
+        <div className="flex flex-col space-y-1 min-w-0 w-[220px] text-slate-400">
+          <div className="flex items-center gap-2">
+            <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-[11px] truncate">{formatQueryTime(account.lastUsageUpdate)}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7H7a2 2 0 00-2 2v8m8-10h4a2 2 0 012 2v4m-6 4h4a2 2 0 002-2v-2m-6 4H7a2 2 0 01-2-2v-2" />
+            </svg>
+            <span className="text-[11px] truncate">Auth updated: {formatAuthUpdated(authUpdatedAtMs)}</span>
+          </div>
+          <div className="pt-1">
+            <LinearProgress
+              value={expirePercent}
+              label="Expire"
+              subLabel={formatRelativeTime(expireAtSec)}
+            />
+          </div>
+          {needsRelogin && (
+            <div className="text-[11px] text-amber-300">
+              Please log in again.
+            </div>
+          )}
         </div>
 
-        {/* Right: Icon Buttons */}
-        <div className="flex flex-col gap-2 flex-shrink-0">
-          <div className="flex gap-2">
+        {/* Right: Progress + Actions */}
+        <div className="flex items-start gap-3 flex-shrink-0">
+          <div className="flex flex-col gap-2 w-40">
+            <LinearProgress
+              value={account.usage?.primaryWindow?.usedPercent ?? 0}
+              label="5H Limit"
+              subLabel={formatRelativeTime(account.usage?.primaryWindow?.resetsAt)}
+            />
+            <LinearProgress
+              value={account.usage?.secondaryWindow?.usedPercent ?? 0}
+              label="Weekly"
+              subLabel={formatRelativeTime(account.usage?.secondaryWindow?.resetsAt)}
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex gap-2">
             <Button
               onClick={(e) => {
                 e.stopPropagation();
@@ -251,7 +293,7 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
               title="Refresh Token"
               variant="outline"
               size="icon"
-              className="h-8 w-8"
+              className="h-7 w-7"
             >
               {refreshing ? (
                 <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -275,15 +317,15 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
               title="Delete Account"
               variant="outline"
               size="icon"
-              className="h-8 w-8 border-rose-300/25 bg-rose-300/10 text-rose-200 hover:bg-rose-300/20"
+              className="h-7 w-7 border-rose-300/25 bg-rose-300/10 text-rose-200 hover:bg-rose-300/20"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
             </Button>
-          </div>
+            </div>
 
-          {!account.isActive && (
+            {!account.isActive && (
             <Button
               onClick={(e) => {
                 e.stopPropagation();
@@ -292,15 +334,15 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
               disabled={!!isTokenExpired}
               title="Switch to this account"
               size="icon"
-              className="h-10 w-10 bg-primary-500/25 text-primary-200 hover:bg-primary-500/40 border border-primary-400/30"
+              className="h-9 w-9 bg-primary-500/25 text-primary-200 hover:bg-primary-500/40 border border-primary-400/30"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
               </svg>
             </Button>
-          )}
+            )}
 
-          {onEditPool && (
+            {onEditPool && (
             <Button
               onClick={(e) => {
                 e.stopPropagation();
@@ -308,11 +350,21 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
               }}
               variant="outline"
               size="sm"
-              className="h-7 px-2 text-[11px] border-cyan-500/25 text-cyan-300 hover:bg-cyan-500/10"
+              className="h-6 px-2 text-[10px] border-cyan-500/25 text-cyan-300 hover:bg-cyan-500/10"
               title="Configure switch priority"
             >
               Priority {account.pool?.priority ?? 5}
             </Button>
+            )}
+          </div>
+
+          {isUsageLoading && (
+            <div className="flex items-center justify-center h-7 w-7 rounded-md border border-white/10 bg-white/[0.03]">
+              <svg className="w-3.5 h-3.5 animate-spin text-slate-400" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </div>
           )}
         </div>
       </div>

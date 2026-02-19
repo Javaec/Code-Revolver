@@ -20,6 +20,7 @@ export interface AccountInfo {
     subscriptionEnd: string | null;
     isActive: boolean;
     filePath: string;
+    authUpdatedAt: number;
     usage?: UsageInfo;
     expiresAt?: number; // Deprecated
     lastRefresh: string;
