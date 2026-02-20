@@ -113,16 +113,6 @@ function getWeeklyResetEtaMs(account: AccountInfo, nowMs: number): number {
     return Math.max(0, resetAtMs - nowMs);
 }
 
-function getWeeklyResetRemainingDays(account: AccountInfo, nowMs: number): number {
-    const DAY_MS = 24 * 60 * 60 * 1000;
-    const etaMs = getWeeklyResetEtaMs(account, nowMs);
-    if (!Number.isFinite(etaMs)) {
-        return Number.MAX_SAFE_INTEGER;
-    }
-
-    return Math.floor(etaMs / DAY_MS);
-}
-
 function getWeeklyGroupOrder(account: AccountInfo): number {
     const weekly = getWeeklyUsagePercent(account);
     return weekly > 90 ? 1 : 0;
@@ -132,10 +122,23 @@ function compareAccountsByWeeklyReset(a: AccountInfo, b: AccountInfo, nowMs: num
     const groupDiff = getWeeklyGroupOrder(a) - getWeeklyGroupOrder(b);
     if (groupDiff !== 0) return groupDiff;
 
-    const dayDiff = getWeeklyResetRemainingDays(a, nowMs) - getWeeklyResetRemainingDays(b, nowMs);
-    if (dayDiff !== 0) return dayDiff;
+    const groupOrder = getWeeklyGroupOrder(a);
+    if (groupOrder === 0) {
+        // Upper group (Weekly <= 90): sort by smaller weekly percent first.
+        const weeklyDiff = getWeeklyUsagePercent(a) - getWeeklyUsagePercent(b);
+        if (weeklyDiff !== 0) return weeklyDiff;
+    } else {
+        // Lower group (Weekly > 90): sort by earlier weekly reset (days/hours) first.
+        const etaDiff = getWeeklyResetEtaMs(a, nowMs) - getWeeklyResetEtaMs(b, nowMs);
+        if (etaDiff !== 0) return etaDiff;
+    }
 
     return a.name.localeCompare(b.name, 'en-US');
+}
+
+function sortAccountsByWeeklyRule(accounts: AccountInfo[]): AccountInfo[] {
+    const nowMs = Date.now();
+    return [...accounts].sort((a, b) => compareAccountsByWeeklyReset(a, b, nowMs));
 }
 
 export function useAccounts() {
@@ -220,9 +223,7 @@ export function useAccounts() {
             }
             saveUsageCache(usageCache);
 
-            const nowMs = Date.now();
-            baseAccounts.sort((a, b) => compareAccountsByWeeklyReset(a, b, nowMs));
-            setAccounts(baseAccounts);
+            setAccounts(sortAccountsByWeeklyRule(baseAccounts));
 
             const loadingMap: Record<string, boolean> = {};
             baseAccounts.forEach(acc => {
@@ -244,9 +245,7 @@ export function useAccounts() {
                                     ? { ...item, usage, lastUsageUpdate: Date.now(), isTokenExpired: false }
                                     : item
                             ));
-                            const now = Date.now();
-                            next.sort((a, b) => compareAccountsByWeeklyReset(a, b, now));
-                            return next;
+                            return sortAccountsByWeeklyRule(next);
                         });
                     })
                     .catch((error: unknown) => {
@@ -259,9 +258,7 @@ export function useAccounts() {
                                     ? { ...item, usage: cached?.usage, lastUsageUpdate: cached?.cachedAt ?? Date.now(), isTokenExpired: isExpired }
                                     : item
                             ));
-                            const now = Date.now();
-                            next.sort((a, b) => compareAccountsByWeeklyReset(a, b, now));
-                            return next;
+                            return sortAccountsByWeeklyRule(next);
                         });
                     })
                     .finally(() => {
