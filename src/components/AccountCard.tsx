@@ -79,12 +79,12 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
     });
   };
 
-  const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+  const EXPIRE_WINDOW_MS = 10 * 24 * 60 * 60 * 1000;
   const authUpdatedAtMs = account.authUpdatedAt;
-  const expireAtMs = authUpdatedAtMs + TWO_WEEKS_MS;
+  const expireAtMs = authUpdatedAtMs + EXPIRE_WINDOW_MS;
   const expireAtSec = Math.floor(expireAtMs / 1000);
   const expireElapsed = Math.max(0, Date.now() - authUpdatedAtMs);
-  const expirePercent = Math.min(100, Math.max(0, (expireElapsed / TWO_WEEKS_MS) * 100));
+  const expirePercent = Math.min(100, Math.max(0, (expireElapsed / EXPIRE_WINDOW_MS) * 100));
   const needsRelogin = expirePercent >= 95;
 
   const handleRename = async () => {
