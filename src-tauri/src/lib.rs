@@ -40,6 +40,8 @@ pub struct CodexAuthFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountInfo {
     pub id: String,
+    #[serde(rename = "upstreamAccountId")]
+    pub upstream_account_id: String,
     pub name: String,
     pub email: String,
     #[serde(rename = "planType")]
@@ -187,6 +189,30 @@ pub(crate) fn extract_info_from_auth(auth: &CodexAuthFile) -> (String, String, O
     }
 
     ("Unknown".to_string(), "unknown".to_string(), None, None)
+}
+
+pub(crate) fn extract_profile_id_from_auth(auth: &CodexAuthFile, fallback_path: Option<&PathBuf>) -> String {
+    if let Some(payload) = decode_jwt_payload(&auth.tokens.id_token) {
+        if let Some(subject) = payload.get("sub").and_then(|value| value.as_str()) {
+            let normalized = subject.trim();
+            if !normalized.is_empty() {
+                return normalized.to_string();
+            }
+        }
+
+        if let Some(email) = payload.get("email").and_then(|value| value.as_str()) {
+            let normalized = email.trim().to_ascii_lowercase();
+            if !normalized.is_empty() {
+                return format!("email:{}", normalized);
+            }
+        }
+    }
+
+    if let Some(path) = fallback_path {
+        return format!("path:{}", path.to_string_lossy().to_ascii_lowercase());
+    }
+
+    auth.tokens.account_id.clone()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

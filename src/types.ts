@@ -14,6 +14,7 @@ export interface UsageInfo {
 
 export interface AccountInfo {
     id: string;
+    upstreamAccountId?: string;
     name: string;
     email: string;
     planType: string;

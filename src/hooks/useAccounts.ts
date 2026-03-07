@@ -264,10 +264,14 @@ export function useAccounts() {
 
                 const migratedPoolEntries: Record<string, AccountPoolMetadata> = {};
                 const baseAccounts = result.accounts.map((account) => {
-                    const rawPoolMetadata = accountPool[account.id] || accountPool[account.filePath];
+                    const rawPoolMetadata = accountPool[account.id]
+                        || (account.upstreamAccountId ? accountPool[account.upstreamAccountId] : undefined)
+                        || accountPool[account.filePath];
                     const pool = normalizePoolMetadata(rawPoolMetadata);
 
                     if (!accountPool[account.id] && accountPool[account.filePath]) {
+                        migratedPoolEntries[account.id] = pool;
+                    } else if (!accountPool[account.id] && account.upstreamAccountId && accountPool[account.upstreamAccountId]) {
                         migratedPoolEntries[account.id] = pool;
                     }
 

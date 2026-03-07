@@ -9,6 +9,7 @@ use crate::account_files::{
 use crate::config::{load_config, save_config};
 use crate::error::{AppError, AppResult};
 use crate::{
+    extract_profile_id_from_auth,
     extract_info_from_auth,
     get_accounts_dir,
     get_codex_auth_file,
@@ -95,7 +96,8 @@ pub fn scan_accounts() -> Result<ScanResult, String> {
                 .unwrap_or(false);
 
             AccountInfo {
-                id: file.auth.tokens.account_id,
+                id: extract_profile_id_from_auth(&file.auth, Some(&file.path)),
+                upstream_account_id: file.auth.tokens.account_id,
                 name,
                 email,
                 plan_type,
@@ -338,6 +340,7 @@ pub fn update_account_content(file_path: String, content: String) -> Result<(), 
 pub fn add_account(name: String, content: String) -> Result<(), String> {
     let auth: CodexAuthFile =
         serde_json::from_str(&content).map_err(|e| format!("Invalid JSON format: {}", e))?;
+    let profile_id = extract_profile_id_from_auth(&auth, None);
 
     let file_name = if !name.trim().is_empty() {
         name.trim().to_string()
@@ -360,6 +363,18 @@ pub fn add_account(name: String, content: String) -> Result<(), String> {
     if !accounts_dir.exists() {
         fs::create_dir_all(&accounts_dir)
             .map_err(|e| format!("Failed to create accounts directory: {}", e))?;
+    }
+
+    let existing_files = collect_account_files(&accounts_dir, None)?;
+    if let Some(existing_file) = existing_files.into_iter().find(|file| {
+        extract_profile_id_from_auth(&file.auth, Some(&file.path)) == profile_id
+    }) {
+        let existing_name = existing_file
+            .path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("existing profile");
+        return Err(format!("Profile already exists as '{}'", existing_name));
     }
 
     let target_path = accounts_dir.join(format!("{}.json", file_name));

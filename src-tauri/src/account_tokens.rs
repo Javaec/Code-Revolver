@@ -1,4 +1,5 @@
-use crate::account_files::{paths_match, resolve_managed_account_path};
+use crate::account_files::{files_have_same_content, paths_match, resolve_managed_account_path};
+use crate::config::load_config;
 use crate::{get_accounts_dir, get_codex_auth_file, CodexAuthFile};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -25,6 +26,16 @@ const TOKEN_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 pub async fn refresh_account_token(file_path: String) -> Result<String, String> {
     let validated_path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
     let active_auth_path = get_codex_auth_file();
+    let active_accounts_dir = get_accounts_dir();
+    let configured_active_path = load_config()
+        .active_account_file
+        .and_then(|value| resolve_managed_account_path(&value, &active_accounts_dir).ok());
+    let was_active_source = configured_active_path
+        .as_ref()
+        .is_some_and(|active_path| paths_match(active_path, &validated_path))
+        || (active_auth_path.exists()
+            && !paths_match(&active_auth_path, &validated_path)
+            && files_have_same_content(&validated_path, &active_auth_path));
     let content = fs::read_to_string(&validated_path)
         .map_err(|e| format!("Failed to read authentication file: {}", e))?;
 
@@ -94,16 +105,10 @@ pub async fn refresh_account_token(file_path: String) -> Result<String, String> 
     fs::write(&validated_path, &updated_content).map_err(|e| format!("Failed to write file: {}", e))?;
 
     let mut synced_active_auth = false;
-    if active_auth_path.exists() && !paths_match(&active_auth_path, &validated_path) {
-        if let Ok(active_content) = fs::read_to_string(&active_auth_path) {
-            if let Ok(active_auth) = serde_json::from_str::<CodexAuthFile>(&active_content) {
-                if active_auth.tokens.account_id == updated_auth.tokens.account_id {
-                    fs::write(&active_auth_path, &updated_content)
-                        .map_err(|e| format!("Failed to update active authentication file: {}", e))?;
-                    synced_active_auth = true;
-                }
-            }
-        }
+    if was_active_source && active_auth_path.exists() && !paths_match(&active_auth_path, &validated_path) {
+        fs::write(&active_auth_path, &updated_content)
+            .map_err(|e| format!("Failed to update active authentication file: {}", e))?;
+        synced_active_auth = true;
     }
 
     if synced_active_auth {
