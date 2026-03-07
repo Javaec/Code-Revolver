@@ -9,6 +9,7 @@ use crate::{
     extract_info_from_auth,
     get_accounts_dir,
     get_codex_auth_file,
+    gateway_platform_key_entry,
     load_config,
     save_config,
     webdav_password_entry,
@@ -168,6 +169,31 @@ pub fn set_webdav_password(password: String) -> Result<(), String> {
     entry
         .set_password(&password)
         .map_err(|e| format!("Failed to save WebDAV password: {}", e))
+}
+
+#[tauri::command]
+pub fn get_gateway_platform_key() -> Result<Option<String>, String> {
+    let entry = gateway_platform_key_entry()?;
+    match entry.get_password() {
+        Ok(platform_key) => Ok(Some(platform_key)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Failed to load gateway platform key: {}", e)),
+    }
+}
+
+#[tauri::command]
+pub fn set_gateway_platform_key(platform_key: String) -> Result<(), String> {
+    let entry = gateway_platform_key_entry()?;
+    if platform_key.trim().is_empty() {
+        return match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(format!("Failed to clear gateway platform key: {}", e)),
+        };
+    }
+
+    entry
+        .set_password(&platform_key)
+        .map_err(|e| format!("Failed to save gateway platform key: {}", e))
 }
 
 #[tauri::command]

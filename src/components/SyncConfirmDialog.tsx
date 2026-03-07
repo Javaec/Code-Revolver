@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WebDavConfig, SyncSettings, SyncResult, DEFAULT_SYNC_SETTINGS } from '../types';
 import { Button, Card } from './ui';
 import { buildWebDavRequestConfig, validateWebDavConfig } from '../lib/webdav';
+import { commands } from '../lib/commands';
 
 interface SyncConfirmDialogProps {
   isOpen: boolean;
@@ -84,25 +84,25 @@ export function SyncConfirmDialog({
 
       if (direction === 'upload') {
         // Upload Codex config
-        const codexResult = await invoke<SyncResult>('webdav_sync_codex_upload', { config, syncConfig });
+        const codexResult = await commands.syncCodexUpload(config, syncConfig);
         result.uploaded.push(...codexResult.uploaded);
         result.errors.push(...codexResult.errors);
 
         // Upload account files
         if (sync.syncAccounts) {
-          const accountResult = await invoke<SyncResult>('webdav_sync_upload', { config });
+          const accountResult = await commands.syncAccountsUpload(config);
           result.uploaded.push(...accountResult.uploaded.map(f => `Account: ${f}`));
           result.errors.push(...accountResult.errors);
         }
       } else {
         // Download Codex config
-        const codexResult = await invoke<SyncResult>('webdav_sync_codex_download', { config, syncConfig });
+        const codexResult = await commands.syncCodexDownload(config, syncConfig);
         result.downloaded.push(...codexResult.downloaded);
         result.errors.push(...codexResult.errors);
 
         // Download account files
         if (sync.syncAccounts) {
-          const accountResult = await invoke<SyncResult>('webdav_sync_download', { config });
+          const accountResult = await commands.syncAccountsDownload(config);
           result.downloaded.push(...accountResult.downloaded.map(f => `Account: ${f}`));
           result.errors.push(...accountResult.errors);
         }

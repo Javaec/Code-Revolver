@@ -1,0 +1,51 @@
+import { invoke } from '@tauri-apps/api/core';
+import type {
+  CodexSyncConfig,
+  PromptInfo,
+  ScanResult,
+  SkillInfo,
+  SyncResult,
+  UsageInfo,
+} from '../types';
+import type { WebDavRequestConfig } from './webdav';
+
+export const commands = {
+  openAccountsDir: () => invoke<string>('open_accounts_dir'),
+  openCodexDir: () => invoke<string>('open_codex_dir'),
+  scanAccounts: () => invoke<ScanResult>('scan_accounts'),
+  fetchUsage: (filePath: string) => invoke<UsageInfo>('fetch_usage', { filePath }),
+  switchAccount: (filePath: string) => invoke<void>('switch_account', { filePath }),
+  renameAccount: (oldPath: string, newName: string) => invoke<void>('rename_account', { oldPath, newName }),
+  getAccountsDirPath: () => invoke<string>('get_accounts_dir_path'),
+  setAccountsDir: (path: string) => invoke<void>('set_accounts_dir', { path }),
+  addAccount: (name: string, content: string) => invoke<void>('add_account', { name, content }),
+  deleteAccount: (filePath: string) => invoke<void>('delete_account', { filePath }),
+  readAccountContent: (filePath: string) => invoke<string>('read_account_content', { filePath }),
+  updateAccountContent: (filePath: string, content: string) => invoke<void>('update_account_content', { filePath, content }),
+  refreshAccountToken: (filePath: string) => invoke<string>('refresh_account_token', { filePath }),
+  importDefaultAccount: () => invoke<boolean>('import_default_account'),
+  getWebDavPassword: () => invoke<string | null>('get_webdav_password'),
+  setWebDavPassword: (password: string) => invoke<void>('set_webdav_password', { password }),
+  getGatewayPlatformKey: () => invoke<string | null>('get_gateway_platform_key'),
+  setGatewayPlatformKey: (platformKey: string) => invoke<void>('set_gateway_platform_key', { platformKey }),
+  testWebDavConnection: (config: WebDavRequestConfig) => invoke<string>('webdav_test_connection', { config }),
+  syncAccountsUpload: (config: WebDavRequestConfig) => invoke<SyncResult>('webdav_sync_upload', { config }),
+  syncAccountsDownload: (config: WebDavRequestConfig) => invoke<SyncResult>('webdav_sync_download', { config }),
+  syncCodexUpload: (config: WebDavRequestConfig, syncConfig: CodexSyncConfig) =>
+    invoke<SyncResult>('webdav_sync_codex_upload', { config, syncConfig }),
+  syncCodexDownload: (config: WebDavRequestConfig, syncConfig: CodexSyncConfig) =>
+    invoke<SyncResult>('webdav_sync_codex_download', { config, syncConfig }),
+  scanPrompts: () => invoke<PromptInfo[]>('scan_prompts'),
+  savePromptContent: (filePath: string, content: string) => invoke<void>('save_prompt_content', { filePath, content }),
+  createPrompt: (name: string, description: string, content: string) => invoke('create_prompt', { name, description, content }),
+  deletePrompt: (filePath: string) => invoke<void>('delete_prompt', { filePath }),
+  scanSkills: () => invoke<SkillInfo[]>('scan_skills'),
+  readSkillContent: (dirPath: string) => invoke<string>('read_skill_content', { dirPath }),
+  saveSkillContent: (dirPath: string, content: string) => invoke<void>('save_skill_content', { dirPath, content }),
+  createSkill: (name: string, description: string) => invoke('create_skill', { name, description }),
+  deleteSkill: (dirPath: string) => invoke<void>('delete_skill', { dirPath }),
+  readAgentsMd: () => invoke<string>('read_agents_md'),
+  saveAgentsMd: (content: string) => invoke<void>('save_agents_md', { content }),
+  readConfigToml: () => invoke<string>('read_config_toml'),
+  saveConfigToml: (content: string) => invoke<void>('save_config_toml', { content }),
+};

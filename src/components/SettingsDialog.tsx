@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AppSettings, DEFAULT_SETTINGS, MutationResult } from '../types';
 import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
 import { Button, Card } from './ui';
 import { buildWebDavRequestConfig, validateWebDavConfig } from '../lib/webdav';
 import { SettingsGeneralTab } from './settings/SettingsGeneralTab';
 import { SettingsSyncTab } from './settings/SettingsSyncTab';
+import { commands } from '../lib/commands';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -80,9 +80,7 @@ export function SettingsDialog({
     setWebdavTesting(true);
     setWebdavMessage(null);
     try {
-      const result = await invoke<string>('webdav_test_connection', {
-        config: buildWebDavRequestConfig(webdav),
-      });
+      const result = await commands.testWebDavConnection(buildWebDavRequestConfig(webdav));
       setWebdavMessage({ type: 'success', text: result });
     } catch (e: unknown) {
       setWebdavMessage({ type: 'error', text: String(e) });

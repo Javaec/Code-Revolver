@@ -1,7 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
 import { AppSettings, DEFAULT_SETTINGS, DEFAULT_SYNC_SETTINGS } from '../../types';
 import { hasWebDavCredentials } from '../../lib/webdav';
 import { Button, Input } from '../ui';
+import { commands } from '../../lib/commands';
 
 interface SettingsSyncTabProps {
   settings: AppSettings;
@@ -62,7 +62,7 @@ export function SettingsSyncTab({
           className="flex-1"
           onClick={async () => {
             try {
-              await invoke('open_codex_dir');
+              await commands.openCodexDir();
             } catch (e) {
               console.error('Failed to open directory:', e);
             }

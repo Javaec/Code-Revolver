@@ -1,7 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
 import { startTransition, useCallback, useEffect, useState } from 'react';
 import { PromptInfo } from '../types';
 import { confirmAction, showError } from '../lib/dialogs';
+import { commands } from '../lib/commands';
 
 export function usePromptsManager() {
   const [prompts, setPrompts] = useState<PromptInfo[]>([]);
@@ -17,7 +17,7 @@ export function usePromptsManager() {
   const loadPrompts = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await invoke<PromptInfo[]>('scan_prompts');
+      const result = await commands.scanPrompts();
       startTransition(() => {
         setPrompts(result);
       });
@@ -44,10 +44,7 @@ export function usePromptsManager() {
   const handleSave = useCallback(async () => {
     if (!selectedPrompt) return;
     try {
-      await invoke('save_prompt_content', {
-        filePath: selectedPrompt.filePath,
-        content: editContent,
-      });
+      await commands.savePromptContent(selectedPrompt.filePath, editContent);
       await loadPrompts();
       setIsEditing(false);
     } catch (error) {
@@ -59,7 +56,7 @@ export function usePromptsManager() {
   const handleDelete = useCallback(async (prompt: PromptInfo) => {
     if (!await confirmAction(`Delete prompt "${prompt.name}"?`, 'Delete Prompt')) return;
     try {
-      await invoke('delete_prompt', { filePath: prompt.filePath });
+      await commands.deletePrompt(prompt.filePath);
       if (selectedPrompt?.filePath === prompt.filePath) {
         setSelectedPrompt(null);
       }
@@ -80,11 +77,11 @@ export function usePromptsManager() {
   const handleCreate = useCallback(async () => {
     if (!newName.trim()) return;
     try {
-      await invoke('create_prompt', {
-        name: newName.trim(),
-        description: newDescription.trim(),
-        content: newContent.trim() || `# ${newName.trim()}`,
-      });
+      await commands.createPrompt(
+        newName.trim(),
+        newDescription.trim(),
+        newContent.trim() || `# ${newName.trim()}`,
+      );
       closeCreateDialog();
       await loadPrompts();
     } catch (error) {

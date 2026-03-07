@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { invoke } from '@tauri-apps/api/core';
 import { AccountInfo } from '../types';
 import { Button, Card } from './ui';
+import { commands } from '../lib/commands';
 
 interface EditAccountDialogProps {
   isOpen: boolean;
@@ -34,7 +34,7 @@ export function EditAccountDialog({ isOpen, onClose, account, onSave }: EditAcco
     setLoadingContent(true);
     setError('');
     try {
-      const content = await invoke<string>('read_account_content', { filePath: account.filePath });
+      const content = await commands.readAccountContent(account.filePath);
       setJsonContent(content);
     } catch (e: unknown) {
       setError(String(e));
@@ -63,7 +63,7 @@ export function EditAccountDialog({ isOpen, onClose, account, onSave }: EditAcco
     setLoading(true);
     setError('');
     try {
-      await invoke('update_account_content', { filePath: account.filePath, content: jsonContent });
+      await commands.updateAccountContent(account.filePath, jsonContent);
       // Add a slight delay to ensure UI refreshes correctly
       await new Promise(resolve => setTimeout(resolve, 500));
       onSave();

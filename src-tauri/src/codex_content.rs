@@ -30,6 +30,34 @@ fn parse_frontmatter(content: &str) -> Option<serde_json::Value> {
     None
 }
 
+fn resolve_path_within(base_dir: &PathBuf, path: &str) -> Result<PathBuf, String> {
+    let candidate = PathBuf::from(path);
+    let resolved_path = fs::canonicalize(&candidate)
+        .map_err(|e| format!("Failed to resolve path: {}", e))?;
+    let resolved_base = if base_dir.exists() {
+        fs::canonicalize(base_dir).map_err(|e| format!("Failed to resolve base directory: {}", e))?
+    } else {
+        base_dir.clone()
+    };
+
+    if !resolved_path.starts_with(&resolved_base) {
+        return Err("Path is outside the managed Codex directory".to_string());
+    }
+
+    Ok(resolved_path)
+}
+
+fn sanitize_leaf_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Name cannot be empty".to_string());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
+        return Err("Name contains unsupported path characters".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
 fn scan_prompts_recursive(dir: &PathBuf, prompts: &mut Vec<PromptInfo>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -150,25 +178,28 @@ pub fn scan_skills() -> Result<Vec<SkillInfo>, String> {
 
 #[tauri::command]
 pub fn read_prompt_content(file_path: String) -> Result<String, String> {
-    fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file: {}", e))
+    let path = resolve_path_within(&get_prompts_dir(), &file_path)?;
+    fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
 }
 
 #[tauri::command]
 pub fn save_prompt_content(file_path: String, content: String) -> Result<(), String> {
-    fs::write(&file_path, content).map_err(|e| format!("Failed to save file: {}", e))
+    let path = resolve_path_within(&get_prompts_dir(), &file_path)?;
+    fs::write(&path, content).map_err(|e| format!("Failed to save file: {}", e))
 }
 
 #[tauri::command]
 pub fn create_prompt(name: String, description: String, content: String) -> Result<String, String> {
+    let safe_name = sanitize_leaf_name(&name)?;
     let prompts_dir = get_prompts_dir();
     if !prompts_dir.exists() {
         fs::create_dir_all(&prompts_dir).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
-    let file_name = format!("{}.md", name);
+    let file_name = format!("{}.md", safe_name);
     let file_path = prompts_dir.join(&file_name);
     if file_path.exists() {
-        return Err(format!("Prompt '{}' already exists", name));
+        return Err(format!("Prompt '{}' already exists", safe_name));
     }
 
     let full_content = format!("---\ndescription: {}\n---\n\n{}", description, content);
@@ -178,27 +209,31 @@ pub fn create_prompt(name: String, description: String, content: String) -> Resu
 
 #[tauri::command]
 pub fn delete_prompt(file_path: String) -> Result<(), String> {
-    fs::remove_file(&file_path).map_err(|e| format!("Failed to delete file: {}", e))
+    let path = resolve_path_within(&get_prompts_dir(), &file_path)?;
+    fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {}", e))
 }
 
 #[tauri::command]
 pub fn read_skill_content(dir_path: String) -> Result<String, String> {
-    let skill_md = PathBuf::from(&dir_path).join("SKILL.md");
+    let skill_dir = resolve_path_within(&get_skills_dir(), &dir_path)?;
+    let skill_md = skill_dir.join("SKILL.md");
     fs::read_to_string(&skill_md).map_err(|e| format!("Failed to read file: {}", e))
 }
 
 #[tauri::command]
 pub fn save_skill_content(dir_path: String, content: String) -> Result<(), String> {
-    let skill_md = PathBuf::from(&dir_path).join("SKILL.md");
+    let skill_dir = resolve_path_within(&get_skills_dir(), &dir_path)?;
+    let skill_md = skill_dir.join("SKILL.md");
     fs::write(&skill_md, content).map_err(|e| format!("Failed to save file: {}", e))
 }
 
 #[tauri::command]
 pub fn create_skill(name: String, description: String) -> Result<String, String> {
+    let safe_name = sanitize_leaf_name(&name)?;
     let skills_dir = get_skills_dir();
-    let skill_dir = skills_dir.join(&name);
+    let skill_dir = skills_dir.join(&safe_name);
     if skill_dir.exists() {
-        return Err(format!("Skill '{}' already exists", name));
+        return Err(format!("Skill '{}' already exists", safe_name));
     }
 
     fs::create_dir_all(&skill_dir).map_err(|e| format!("Failed to create directory: {}", e))?;
@@ -207,7 +242,7 @@ pub fn create_skill(name: String, description: String) -> Result<String, String>
         name, description, name
     );
     let skill_md = skill_dir.join("SKILL.md");
-    fs::write(&skill_md, skill_md_content)
+        fs::write(&skill_md, skill_md_content)
         .map_err(|e| format!("Failed to create SKILL.md: {}", e))?;
 
     Ok(skill_dir.to_string_lossy().to_string())
@@ -215,7 +250,8 @@ pub fn create_skill(name: String, description: String) -> Result<String, String>
 
 #[tauri::command]
 pub fn delete_skill(dir_path: String) -> Result<(), String> {
-    fs::remove_dir_all(&dir_path).map_err(|e| format!("Failed to delete directory: {}", e))
+    let skill_dir = resolve_path_within(&get_skills_dir(), &dir_path)?;
+    fs::remove_dir_all(&skill_dir).map_err(|e| format!("Failed to delete directory: {}", e))
 }
 
 #[tauri::command]

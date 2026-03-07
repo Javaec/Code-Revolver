@@ -1,14 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     AccountInfo,
-    ScanResult,
     UsageInfo,
     AppSettings,
     DEFAULT_SETTINGS,
     MutationResult,
     AccountPoolMetadata,
 } from '../types';
-import { invoke } from '@tauri-apps/api/core';
 import {
     calculateSwitchScore,
     normalizePoolMetadata,
@@ -16,6 +14,7 @@ import {
     sortAccountsByWeeklyRule,
 } from './useAccountsModel';
 import { useIntervalTask } from './useIntervalTask';
+import { commands } from '../lib/commands';
 
 const SETTINGS_STORAGE_KEY = 'code_revolver_settings';
 const USAGE_CACHE_KEY = 'code_revolver_usage_cache';
@@ -44,6 +43,11 @@ function saveUsageCache(cache: Record<string, UsageCacheEntry>): void {
 function persistSettings(settings: AppSettings): void {
     const persistedSettings = {
         ...settings,
+        gateway: {
+            ...settings.gateway,
+            platformKey: '',
+            hasStoredPlatformKey: settings.gateway.hasStoredPlatformKey ?? Boolean(settings.gateway.platformKey),
+        },
         webdav: settings.webdav ? {
             ...settings.webdav,
             password: '',
@@ -83,9 +87,10 @@ export function useAccounts() {
     useEffect(() => {
         const hydrateWebDavPassword = async () => {
             const legacyPassword = settingsRef.current.webdav?.password?.trim();
+            const legacyGatewayKey = settingsRef.current.gateway.platformKey?.trim();
             if (legacyPassword) {
                 try {
-                    await invoke('set_webdav_password', { password: legacyPassword });
+                    await commands.setWebDavPassword(legacyPassword);
                 } catch (error) {
                     console.error('Failed to migrate WebDAV password to secure storage:', error);
                 }
@@ -102,25 +107,33 @@ export function useAccounts() {
                     persistSettings(next);
                     return next;
                 });
-                return;
             }
 
             try {
-                const storedPassword = await invoke<string | null>('get_webdav_password');
+                const storedPassword = await commands.getWebDavPassword();
+                const storedGatewayKey = await commands.getGatewayPlatformKey();
                 setSettings((prev) => {
                     const next = normalizeSettings({
                         ...prev,
+                        gateway: {
+                            ...prev.gateway,
+                            platformKey: storedGatewayKey ?? legacyGatewayKey ?? '',
+                            hasStoredPlatformKey: Boolean(storedGatewayKey) || Boolean(legacyGatewayKey),
+                        },
                         webdav: {
                             ...(prev.webdav || DEFAULT_SETTINGS.webdav!),
-                            password: storedPassword ?? '',
-                            hasStoredPassword: Boolean(storedPassword),
+                            password: storedPassword ?? legacyPassword ?? '',
+                            hasStoredPassword: Boolean(storedPassword) || Boolean(legacyPassword),
                         },
                     });
                     persistSettings(next);
                     return next;
                 });
+                if (legacyGatewayKey) {
+                    await commands.setGatewayPlatformKey(legacyGatewayKey);
+                }
             } catch (error) {
-                console.error('Failed to load WebDAV password from secure storage:', error);
+                console.error('Failed to hydrate secrets from secure storage:', error);
             }
         };
 
@@ -131,10 +144,18 @@ export function useAccounts() {
         const nextPassword = newSettings.webdav && Object.prototype.hasOwnProperty.call(newSettings.webdav, 'password')
             ? newSettings.webdav.password ?? ''
             : undefined;
+        const nextGatewayKey = newSettings.gateway && Object.prototype.hasOwnProperty.call(newSettings.gateway, 'platformKey')
+            ? newSettings.gateway.platformKey ?? ''
+            : undefined;
 
         if (nextPassword !== undefined) {
-            void invoke('set_webdav_password', { password: nextPassword }).catch((error) => {
+            void commands.setWebDavPassword(nextPassword).catch((error) => {
                 console.error('Failed to persist WebDAV password in secure storage:', error);
+            });
+        }
+        if (nextGatewayKey !== undefined) {
+            void commands.setGatewayPlatformKey(nextGatewayKey).catch((error) => {
+                console.error('Failed to persist gateway platform key in secure storage:', error);
             });
         }
 
@@ -143,7 +164,13 @@ export function useAccounts() {
                 ? { ...prev.accountPool, ...newSettings.accountPool }
                 : prev.accountPool;
             const mergedGateway = newSettings.gateway
-                ? { ...prev.gateway, ...newSettings.gateway }
+                ? {
+                    ...prev.gateway,
+                    ...newSettings.gateway,
+                    hasStoredPlatformKey: nextGatewayKey !== undefined
+                        ? nextGatewayKey.trim().length > 0
+                        : newSettings.gateway.hasStoredPlatformKey ?? prev.gateway.hasStoredPlatformKey ?? false,
+                }
                 : prev.gateway;
             const mergedWebDav = newSettings.webdav
                 ? {
@@ -173,7 +200,7 @@ export function useAccounts() {
     }, []);
 
     const fetchUsage = useCallback(async (filePath: string): Promise<UsageInfo> => {
-        return await invoke<UsageInfo>('fetch_usage', { filePath });
+        return await commands.fetchUsage(filePath);
     }, []);
 
     const withAccountMutationLock = useCallback(async <T,>(
@@ -207,7 +234,7 @@ export function useAccounts() {
             setLoading(true);
 
             try {
-                const result = await invoke<ScanResult>('scan_accounts');
+                const result = await commands.scanAccounts();
                 const usageCache = loadUsageCache();
                 const accountPool = settingsRef.current.accountPool;
                 const usageUpdatesByPath: Record<string, {
@@ -316,7 +343,7 @@ export function useAccounts() {
     const switchAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
         try {
             await withAccountMutationLock(filePath, 'switch', async () => {
-                await invoke('switch_account', { filePath });
+                await commands.switchAccount(filePath);
 
                 // Optimistic update: mark new account active locally to avoid waiting for full refresh
                 setAccounts(prev => prev.map(acc => {
@@ -407,7 +434,7 @@ export function useAccounts() {
     useEffect(() => {
         const init = async () => {
             try {
-                await invoke('import_default_account');
+                await commands.importDefaultAccount();
             } catch (e) {
                 console.error('Failed to import default account:', e);
             }
@@ -445,7 +472,7 @@ export function useAccounts() {
                     )));
                 }
 
-                await invoke('rename_account', { oldPath, newName });
+                await commands.renameAccount(oldPath, newName);
                 await new Promise(resolve => setTimeout(resolve, 500));
                 await refresh();
             });
@@ -459,7 +486,7 @@ export function useAccounts() {
 
     const setAccountsDir = useCallback(async (path: string): Promise<MutationResult> => {
         try {
-            await invoke('set_accounts_dir', { path });
+            await commands.setAccountsDir(path);
             await new Promise(resolve => setTimeout(resolve, 500));
             await refresh();
             return { success: true };
@@ -470,7 +497,7 @@ export function useAccounts() {
 
     const addAccount = useCallback(async (name: string, content: string): Promise<MutationResult> => {
         try {
-            await invoke('add_account', { name, content });
+            await commands.addAccount(name, content);
             // Add a small delay to ensure FS is flushed before scanning
             await new Promise(resolve => setTimeout(resolve, 500));
             await refresh();
@@ -483,7 +510,7 @@ export function useAccounts() {
     const deleteAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
         try {
             await withAccountMutationLock(filePath, 'delete', async () => {
-                await invoke('delete_account', { filePath });
+                await commands.deleteAccount(filePath);
                 await new Promise(resolve => setTimeout(resolve, 500));
                 await refresh();
             });
@@ -496,7 +523,7 @@ export function useAccounts() {
     const refreshAccountToken = useCallback(async (filePath: string): Promise<MutationResult> => {
         try {
             const message = await withAccountMutationLock(filePath, 'refresh-token', async () => {
-                const result = await invoke<string>('refresh_account_token', { filePath });
+                const result = await commands.refreshAccountToken(filePath);
                 await refresh();
                 return result;
             });
@@ -508,7 +535,7 @@ export function useAccounts() {
 
     const getAccountsDir = useCallback(async () => {
         try {
-            return await invoke<string>('get_accounts_dir_path');
+            return await commands.getAccountsDirPath();
         } catch {
             return accountsDir;
         }

@@ -1,5 +1,12 @@
 import { WebDavConfig } from '../types';
 
+export interface WebDavRequestConfig {
+  url: string;
+  username: string;
+  password: string;
+  remotePath: string;
+}
+
 export function hasWebDavCredentials(config: WebDavConfig): boolean {
   return config.username.trim().length > 0
     && (config.password.trim().length > 0 || Boolean(config.hasStoredPassword));
@@ -45,7 +52,7 @@ export function validateWebDavConfig(config: WebDavConfig): string | null {
   return null;
 }
 
-export function buildWebDavRequestConfig(config: WebDavConfig) {
+export function buildWebDavRequestConfig(config: WebDavConfig): WebDavRequestConfig {
   return {
     url: config.url.trim(),
     username: config.username.trim(),

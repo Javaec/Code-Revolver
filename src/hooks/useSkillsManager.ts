@@ -1,7 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
 import { startTransition, useCallback, useEffect, useState } from 'react';
 import { SkillInfo } from '../types';
 import { confirmAction, showError } from '../lib/dialogs';
+import { commands } from '../lib/commands';
 
 export function useSkillsManager() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
@@ -16,7 +16,7 @@ export function useSkillsManager() {
   const loadSkills = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await invoke<SkillInfo[]>('scan_skills');
+      const result = await commands.scanSkills();
       startTransition(() => {
         setSkills(result);
       });
@@ -38,7 +38,7 @@ export function useSkillsManager() {
       setIsEditing(false);
     });
     try {
-      const content = await invoke<string>('read_skill_content', { dirPath: skill.dirPath });
+      const content = await commands.readSkillContent(skill.dirPath);
       setEditContent(content);
     } catch (error) {
       console.error('Failed to read SKILL.md:', error);
@@ -50,10 +50,7 @@ export function useSkillsManager() {
   const handleSave = useCallback(async () => {
     if (!selectedSkill) return;
     try {
-      await invoke('save_skill_content', {
-        dirPath: selectedSkill.dirPath,
-        content: editContent,
-      });
+      await commands.saveSkillContent(selectedSkill.dirPath, editContent);
       await loadSkills();
       setIsEditing(false);
     } catch (error) {
@@ -65,7 +62,7 @@ export function useSkillsManager() {
   const handleDelete = useCallback(async (skill: SkillInfo) => {
     if (!await confirmAction(`Delete skill "${skill.name}" and its entire directory?`, 'Delete Skill')) return;
     try {
-      await invoke('delete_skill', { dirPath: skill.dirPath });
+      await commands.deleteSkill(skill.dirPath);
       if (selectedSkill?.dirPath === skill.dirPath) {
         setSelectedSkill(null);
       }
@@ -85,10 +82,10 @@ export function useSkillsManager() {
   const handleCreate = useCallback(async () => {
     if (!newName.trim()) return;
     try {
-      await invoke('create_skill', {
-        name: newName.trim().toLowerCase().replace(/\s+/g, '-'),
-        description: newDescription.trim(),
-      });
+      await commands.createSkill(
+        newName.trim().toLowerCase().replace(/\s+/g, '-'),
+        newDescription.trim(),
+      );
       closeCreateDialog();
       await loadSkills();
     } catch (error) {
@@ -99,7 +96,7 @@ export function useSkillsManager() {
 
   const handleCancelEdit = useCallback(async () => {
     if (!selectedSkill) return;
-    const content = await invoke<string>('read_skill_content', { dirPath: selectedSkill.dirPath });
+    const content = await commands.readSkillContent(selectedSkill.dirPath);
     setEditContent(content);
     setIsEditing(false);
   }, [selectedSkill]);

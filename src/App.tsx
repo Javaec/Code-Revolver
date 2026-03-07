@@ -1,24 +1,19 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Header } from './components/Header';
 import { NavigationBar, ViewType } from './components/NavigationBar';
 import { AccountCard } from './components/AccountCard';
 import { AddAccountDialog } from './components/AddAccountDialog';
 import { EditAccountDialog } from './components/EditAccountDialog';
 import { SettingsDialog } from './components/SettingsDialog';
-import { PromptsPanel } from './components/PromptsPanel';
-import { SkillsPanel } from './components/SkillsPanel';
-import { AgentsPanel } from './components/AgentsPanel';
-import { ConfigPanel } from './components/ConfigPanel';
 import { SyncConfirmDialog } from './components/SyncConfirmDialog';
 import { AccountPoolPanel } from './components/AccountPoolPanel';
-import { GatewayPanel } from './components/GatewayPanel';
 import { PoolMetadataDialog } from './components/PoolMetadataDialog';
 import { useAccounts } from './hooks/useAccounts';
 import { useIntervalTask } from './hooks/useIntervalTask';
-import { invoke } from '@tauri-apps/api/core';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AccountInfo, AccountPoolMetadata, DEFAULT_SYNC_SETTINGS, GatewaySettings } from './types';
 import { Card, Button } from './components/ui';
+import { commands } from './lib/commands';
 
 // Empty state animation variants
 const emptyStateVariants = {
@@ -37,6 +32,12 @@ const pageVariants = {
   animate: { opacity: 1, x: 0 },
   exit: { opacity: 0, x: -20 },
 };
+
+const PromptsPanel = lazy(async () => ({ default: (await import('./components/PromptsPanel')).PromptsPanel }));
+const SkillsPanel = lazy(async () => ({ default: (await import('./components/SkillsPanel')).SkillsPanel }));
+const AgentsPanel = lazy(async () => ({ default: (await import('./components/AgentsPanel')).AgentsPanel }));
+const ConfigPanel = lazy(async () => ({ default: (await import('./components/ConfigPanel')).ConfigPanel }));
+const GatewayPanel = lazy(async () => ({ default: (await import('./components/GatewayPanel')).GatewayPanel }));
 
 function App() {
   const {
@@ -74,7 +75,7 @@ function App() {
 
   const handleOpenDir = async () => {
     try {
-      await invoke('open_accounts_dir');
+      await commands.openAccountsDir();
     } catch (error) {
       console.error('Failed to open directory:', error);
     }
@@ -122,8 +123,9 @@ function App() {
         )}
 
         <main className="space-y-4">
-          <AnimatePresence mode="wait">
-            {currentView === 'accounts' && (
+          <Suspense fallback={<Card className="p-8 text-center text-slate-400">Loading panel...</Card>}>
+            <AnimatePresence mode="wait">
+              {currentView === 'accounts' && (
               <motion.div
                 key="accounts"
                 initial={{ opacity: 0, y: 10 }}
@@ -231,9 +233,9 @@ function App() {
                   </div>
                 )}
               </motion.div>
-            )}
+              )}
 
-            {currentView === 'prompts' && (
+              {currentView === 'prompts' && (
               <motion.div
                 key="prompts"
                 className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-10rem)]"
@@ -245,9 +247,9 @@ function App() {
               >
                 <PromptsPanel onBack={() => setCurrentView('accounts')} />
               </motion.div>
-            )}
+              )}
 
-            {currentView === 'skills' && (
+              {currentView === 'skills' && (
               <motion.div
                 key="skills"
                 className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-10rem)]"
@@ -259,9 +261,9 @@ function App() {
               >
                 <SkillsPanel onBack={() => setCurrentView('accounts')} />
               </motion.div>
-            )}
+              )}
 
-            {currentView === 'agents' && (
+              {currentView === 'agents' && (
               <motion.div
                 key="agents"
                 className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-10rem)]"
@@ -273,9 +275,9 @@ function App() {
               >
                 <AgentsPanel onBack={() => setCurrentView('accounts')} />
               </motion.div>
-            )}
+              )}
 
-            {currentView === 'config' && (
+              {currentView === 'config' && (
               <motion.div
                 key="config"
                 className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-10rem)]"
@@ -287,9 +289,9 @@ function App() {
               >
                 <ConfigPanel onBack={() => setCurrentView('accounts')} />
               </motion.div>
-            )}
+              )}
 
-            {currentView === 'gateway' && (
+              {currentView === 'gateway' && (
               <motion.div
                 key="gateway"
                 className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-10rem)]"
@@ -305,8 +307,9 @@ function App() {
                   onUpdateGateway={handleUpdateGateway}
                 />
               </motion.div>
-            )}
-          </AnimatePresence>
+              )}
+            </AnimatePresence>
+          </Suspense>
         </main>
 
         <AddAccountDialog

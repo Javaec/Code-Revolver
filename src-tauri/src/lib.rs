@@ -1,6 +1,7 @@
 mod account_files;
 mod accounts;
 mod codex_content;
+mod desktop_shell;
 mod webdav_sync;
 
 use accounts::*;
@@ -8,7 +9,6 @@ use codex_content::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use tauri::{Emitter, Manager};
 use webdav_sync::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,10 +145,17 @@ pub(crate) fn get_skills_dir() -> PathBuf {
 
 const WEBDAV_SECRET_SERVICE: &str = "code-revolver";
 const WEBDAV_SECRET_ACCOUNT: &str = "webdav";
+const GATEWAY_SECRET_SERVICE: &str = "code-revolver";
+const GATEWAY_SECRET_ACCOUNT: &str = "gateway-platform-key";
 
 pub(crate) fn webdav_password_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(WEBDAV_SECRET_SERVICE, WEBDAV_SECRET_ACCOUNT)
         .map_err(|e| format!("Failed to initialize secure password storage: {}", e))
+}
+
+pub(crate) fn gateway_platform_key_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(GATEWAY_SECRET_SERVICE, GATEWAY_SECRET_ACCOUNT)
+        .map_err(|e| format!("Failed to initialize secure gateway key storage: {}", e))
 }
 
 fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
@@ -216,66 +223,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-            use tauri::tray::TrayIconBuilder;
-
-            let codex_auth = get_codex_auth_file();
-            let account_info = if codex_auth.exists() {
-                if let Ok(content) = fs::read_to_string(&codex_auth) {
-                    if let Ok(auth) = serde_json::from_str::<CodexAuthFile>(&content) {
-                        let (email, _, _, _) = extract_info_from_auth(&auth);
-                        format!("Current: {}", email)
-                    } else {
-                        "Current: Unknown".to_string()
-                    }
-                } else {
-                    "Current: Not Configured".to_string()
-                }
-            } else {
-                "Current: Not Configured".to_string()
-            };
-
-            let account_item = MenuItem::with_id(app, "account", &account_info, false, None::<&str>)?;
-            let separator = PredefinedMenuItem::separator(app)?;
-            let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
-            let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
-            let separator2 = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&account_item, &separator, &show, &refresh, &separator2, &quit])?;
-
-            TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "refresh" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.emit("tray-refresh", ());
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } = event {
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
-
+            desktop_shell::setup_tray(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -288,6 +236,8 @@ pub fn run() {
             get_app_config,
             get_webdav_password,
             set_webdav_password,
+            get_gateway_platform_key,
+            set_gateway_platform_key,
             set_accounts_dir,
             add_account,
             delete_account,

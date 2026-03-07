@@ -41,6 +41,7 @@ export interface GatewaySettings {
     enabled: boolean;
     endpoint: string;
     platformKey: string;
+    hasStoredPlatformKey?: boolean;
     manualOAuthCallback: boolean;
     oauthCallbackUrl: string;
     keepAliveIntervalSec: number;
@@ -98,6 +99,7 @@ export const DEFAULT_GATEWAY_SETTINGS: GatewaySettings = {
     enabled: false,
     endpoint: 'http://127.0.0.1:8787',
     platformKey: '',
+    hasStoredPlatformKey: false,
     manualOAuthCallback: true,
     oauthCallbackUrl: 'http://127.0.0.1:8787/oauth/callback',
     keepAliveIntervalSec: 45,

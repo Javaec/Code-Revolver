@@ -35,6 +35,8 @@ export function normalizeGatewaySettings(gateway?: Partial<GatewaySettings>): Ga
   return {
     ...DEFAULT_GATEWAY_SETTINGS,
     ...gateway,
+    platformKey: gateway?.platformKey ?? '',
+    hasStoredPlatformKey: gateway?.hasStoredPlatformKey ?? Boolean(gateway?.platformKey),
     endpoint: gateway?.endpoint?.trim() || DEFAULT_GATEWAY_SETTINGS.endpoint,
     oauthCallbackUrl: gateway?.oauthCallbackUrl?.trim() || DEFAULT_GATEWAY_SETTINGS.oauthCallbackUrl,
     keepAliveIntervalSec: safeKeepAlive,
