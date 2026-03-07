@@ -4,8 +4,10 @@ setlocal EnableExtensions
 set "ROOT_DIR=%~dp0"
 pushd "%ROOT_DIR%" >nul
 
-set "BUILD_MODE=release"
+set "BUILD_MODE=debug"
 set "INSTALL_MODE=auto"
+set "VERIFY_MODE=skip"
+set "BUNDLE_MODE=auto"
 set "TAURI_EXTRA_ARGS="
 
 :parse_args
@@ -32,16 +34,42 @@ if /I "%~1"=="--no-install" (
   shift
   goto parse_args
 )
+if /I "%~1"=="--verify" (
+  set "VERIFY_MODE=run"
+  shift
+  goto parse_args
+)
+if /I "%~1"=="--no-verify" (
+  set "VERIFY_MODE=skip"
+  shift
+  goto parse_args
+)
+if /I "%~1"=="--bundle" (
+  set "BUNDLE_MODE=force"
+  shift
+  goto parse_args
+)
+if /I "%~1"=="--no-bundle" (
+  set "BUNDLE_MODE=skip"
+  shift
+  goto parse_args
+)
 
 set "TAURI_EXTRA_ARGS=%TAURI_EXTRA_ARGS% %~1"
 shift
 goto parse_args
 
 :after_args
+if /I "%BUILD_MODE%"=="release" if /I "%VERIFY_MODE%"=="skip" set "VERIFY_MODE=run"
+if /I "%BUILD_MODE%"=="release" if /I "%BUNDLE_MODE%"=="auto" set "BUNDLE_MODE=force"
+if /I "%BUILD_MODE%"=="debug" if /I "%BUNDLE_MODE%"=="auto" set "BUNDLE_MODE=skip"
+
 echo.
 echo [build.cmd] Project: %ROOT_DIR%
 echo [build.cmd] Mode: %BUILD_MODE%
 echo [build.cmd] Install mode: %INSTALL_MODE%
+echo [build.cmd] Verify mode: %VERIFY_MODE%
+echo [build.cmd] Bundle mode: %BUNDLE_MODE%
 echo.
 
 call "%ROOT_DIR%tools\npm.cmd" --version >nul 2>&1
@@ -74,26 +102,48 @@ if /I "%INSTALL_MODE%"=="ci" (
   echo [build.cmd] Dependency install skipped by --no-install
 )
 
-echo [build.cmd] Running lint check
-call "%ROOT_DIR%tools\npm.cmd" run lint
-if errorlevel 1 goto fail
+if /I "%VERIFY_MODE%"=="run" (
+  echo [build.cmd] Running lint check
+  call "%ROOT_DIR%tools\npm.cmd" run lint
+  if errorlevel 1 goto fail
+) else (
+  echo [build.cmd] Verification skipped for faster local iteration
+)
 
-echo [build.cmd] Running TypeScript check
-call "%ROOT_DIR%tools\node.cmd" "%ROOT_DIR%node_modules\typescript\bin\tsc" --noEmit
-if errorlevel 1 goto fail
+set "TAURI_BUILD_ARGS="
+set "BUILD_LABEL=release"
+set "BUILD_OUTPUT=src-tauri\target\release\bundle"
 
 if /I "%BUILD_MODE%"=="debug" (
-  echo [build.cmd] Building Tauri app (debug)
-  call "%ROOT_DIR%tools\npm.cmd" run tauri build -- --debug%TAURI_EXTRA_ARGS%
+  set "TAURI_BUILD_ARGS= --debug"
+  set "BUILD_LABEL=debug"
+  set "BUILD_OUTPUT=src-tauri\target\debug\bundle"
 ) else (
-  echo [build.cmd] Building Tauri app (release)
-  call "%ROOT_DIR%tools\npm.cmd" run tauri build -- %TAURI_EXTRA_ARGS%
+  set "TAURI_BUILD_ARGS="
+  set "BUILD_LABEL=release"
+  set "BUILD_OUTPUT=src-tauri\target\release\bundle"
 )
+
+if /I "%BUNDLE_MODE%"=="skip" (
+  set "TAURI_BUILD_ARGS=%TAURI_BUILD_ARGS% --no-bundle"
+  if /I "%BUILD_MODE%"=="debug" (
+    set "BUILD_OUTPUT=src-tauri\target\debug\code-revolver.exe"
+  ) else (
+    set "BUILD_OUTPUT=src-tauri\target\release\code-revolver.exe"
+  )
+)
+
+echo [build.cmd] Building Tauri app (%BUILD_LABEL%)
+call "%ROOT_DIR%tools\npm.cmd" run tauri build --%TAURI_BUILD_ARGS%%TAURI_EXTRA_ARGS%
 if errorlevel 1 goto fail
 
 echo.
 echo [build.cmd] Build completed successfully.
-echo [build.cmd] Bundles: src-tauri\target\%BUILD_MODE%\bundle
+if /I "%BUNDLE_MODE%"=="skip" (
+  echo [build.cmd] Binary: %BUILD_OUTPUT%
+) else (
+  echo [build.cmd] Bundles: %BUILD_OUTPUT%
+)
 echo.
 popd >nul
 exit /b 0
@@ -101,11 +151,18 @@ exit /b 0
 :usage
 echo.
 echo Usage:
-echo   build.cmd [--debug^|--release] [--ci] [--no-install] [extra tauri build args]
+echo   build.cmd [--debug^|--release] [--verify^|--no-verify] [--bundle^|--no-bundle] [--ci] [--no-install] [extra tauri build args]
+echo.
+echo Defaults:
+echo   build.cmd = fast local debug build without bundling
+echo   build.cmd --release = verified release build with bundling
 echo.
 echo Examples:
 echo   build.cmd
 echo   build.cmd --debug
+echo   build.cmd --release
+echo   build.cmd --release --no-bundle
+echo   build.cmd --debug --verify
 echo   build.cmd --ci -- --bundles msi
 echo.
 popd >nul

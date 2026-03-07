@@ -21,6 +21,17 @@ Recommended local setup if `sccache` is installed:
 $env:RUSTC_WRAPPER="sccache"
 ```
 
+Fast local build entry points:
+
+- `build.cmd`
+  Default fast path. Builds `debug` and passes `--no-bundle` to Tauri so you get a runnable binary faster.
+- `build-release.cmd`
+  Explicit release path. Builds the bundled release app.
+- `build.cmd --release --no-bundle`
+  Good checkpoint build when you want release Rust optimizations without waiting for installer packaging.
+- `build.cmd --debug --verify`
+  Fast binary build plus lint, if you want a little more confidence before testing.
+
 Recommended sanity checks:
 
 ```powershell
