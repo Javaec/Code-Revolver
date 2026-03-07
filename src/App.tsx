@@ -14,6 +14,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AccountInfo, AccountPoolMetadata, DEFAULT_SYNC_SETTINGS, GatewaySettings } from './types';
 import { Card, Button } from './components/ui';
 import { commands } from './lib/commands';
+import { preloadPanel, panelImporters } from './lib/panelImports';
+import { useNotifications } from './lib/notificationState';
+import { toErrorMessage } from './lib/errors';
 
 // Empty state animation variants
 const emptyStateVariants = {
@@ -33,11 +36,11 @@ const pageVariants = {
   exit: { opacity: 0, x: -20 },
 };
 
-const PromptsPanel = lazy(async () => ({ default: (await import('./components/PromptsPanel')).PromptsPanel }));
-const SkillsPanel = lazy(async () => ({ default: (await import('./components/SkillsPanel')).SkillsPanel }));
-const AgentsPanel = lazy(async () => ({ default: (await import('./components/AgentsPanel')).AgentsPanel }));
-const ConfigPanel = lazy(async () => ({ default: (await import('./components/ConfigPanel')).ConfigPanel }));
-const GatewayPanel = lazy(async () => ({ default: (await import('./components/GatewayPanel')).GatewayPanel }));
+const PromptsPanel = lazy(async () => ({ default: (await panelImporters.prompts()).PromptsPanel }));
+const SkillsPanel = lazy(async () => ({ default: (await panelImporters.skills()).SkillsPanel }));
+const AgentsPanel = lazy(async () => ({ default: (await panelImporters.agents()).AgentsPanel }));
+const ConfigPanel = lazy(async () => ({ default: (await panelImporters.config()).ConfigPanel }));
+const GatewayPanel = lazy(async () => ({ default: (await panelImporters.gateway()).GatewayPanel }));
 
 function App() {
   const {
@@ -57,8 +60,12 @@ function App() {
     rankedCandidates,
     updateAccountPoolMetadata,
     usageLoadingByPath,
-    activeAccountMutation
+    activeAccountMutation,
+    lastFailedMutation,
+    retryLastFailedMutation,
+    dismissLastFailedMutation,
   } = useAccounts();
+  const { notifyError } = useNotifications();
 
   const [currentView, setCurrentView] = useState<ViewType>('accounts');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -77,11 +84,14 @@ function App() {
     try {
       await commands.openAccountsDir();
     } catch (error) {
-      console.error('Failed to open directory:', error);
+      notifyError(toErrorMessage(error), 'Open Directory');
     }
   };
 
   const handleNavigate = (view: ViewType) => {
+    if (view !== 'accounts') {
+      preloadPanel(view);
+    }
     setCurrentView(view);
   };
 
@@ -123,6 +133,24 @@ function App() {
         )}
 
         <main className="space-y-4">
+          {lastFailedMutation && (
+            <Card className="border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-amber-200">Last account action failed</div>
+                  <div className="text-xs text-amber-100/80">{lastFailedMutation.message}</div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" className="h-8" onClick={() => void retryLastFailedMutation()}>
+                    Retry
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8" onClick={dismissLastFailedMutation}>
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          )}
           <Suspense fallback={<Card className="p-8 text-center text-slate-400">Loading panel...</Card>}>
             <AnimatePresence mode="wait">
               {currentView === 'accounts' && (
@@ -139,6 +167,7 @@ function App() {
                   </div>
                   <NavigationBar
                     onNavigate={handleNavigate}
+                    onPrefetchView={preloadPanel}
                     onSync={() => setIsSyncOpen(true)}
                   />
                 </div>
@@ -201,6 +230,7 @@ function App() {
                         <motion.div
                           key={account.filePath}
                           layout
+                          style={{ contentVisibility: 'auto', containIntrinsicSize: '160px' }}
                           initial={{ opacity: 0, y: 12 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -12 }}

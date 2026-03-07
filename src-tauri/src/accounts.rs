@@ -5,16 +5,15 @@ use crate::account_files::{
     resolve_available_account_target,
     resolve_managed_account_path,
 };
+use crate::config::{load_config, save_config};
+use crate::error::{AppError, AppResult};
 use crate::{
     extract_info_from_auth,
     get_accounts_dir,
     get_codex_auth_file,
     gateway_platform_key_entry,
-    load_config,
-    save_config,
     webdav_password_entry,
     AccountInfo,
-    AppConfig,
     CodexAuthFile,
     ScanResult,
 };
@@ -142,58 +141,53 @@ pub fn get_accounts_dir_path() -> String {
 }
 
 #[tauri::command]
-pub fn get_app_config() -> AppConfig {
-    load_config()
-}
-
-#[tauri::command]
-pub fn get_webdav_password() -> Result<Option<String>, String> {
+pub fn get_webdav_password() -> AppResult<Option<String>> {
     let entry = webdav_password_entry()?;
     match entry.get_password() {
         Ok(password) => Ok(Some(password)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Failed to load WebDAV password: {}", e)),
+        Err(e) => Err(AppError::secure_storage(format!("Failed to load WebDAV password: {}", e))),
     }
 }
 
 #[tauri::command]
-pub fn set_webdav_password(password: String) -> Result<(), String> {
+pub fn set_webdav_password(password: String) -> AppResult<()> {
     let entry = webdav_password_entry()?;
     if password.trim().is_empty() {
         return match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(format!("Failed to clear WebDAV password: {}", e)),
+            Err(e) => Err(AppError::secure_storage(format!("Failed to clear WebDAV password: {}", e))),
         };
     }
 
     entry
         .set_password(&password)
-        .map_err(|e| format!("Failed to save WebDAV password: {}", e))
+        .map_err(|e| AppError::secure_storage(format!("Failed to save WebDAV password: {}", e)))
 }
 
 #[tauri::command]
-pub fn get_gateway_platform_key() -> Result<Option<String>, String> {
+pub fn get_gateway_platform_key() -> AppResult<Option<String>> {
     let entry = gateway_platform_key_entry()?;
     match entry.get_password() {
         Ok(platform_key) => Ok(Some(platform_key)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Failed to load gateway platform key: {}", e)),
+        Err(e) => Err(AppError::secure_storage(format!("Failed to load gateway platform key: {}", e))),
     }
 }
 
 #[tauri::command]
-pub fn set_gateway_platform_key(platform_key: String) -> Result<(), String> {
+pub fn set_gateway_platform_key(platform_key: String) -> AppResult<()> {
     let entry = gateway_platform_key_entry()?;
     if platform_key.trim().is_empty() {
         return match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(format!("Failed to clear gateway platform key: {}", e)),
+            Err(e) => Err(AppError::secure_storage(format!("Failed to clear gateway platform key: {}", e))),
         };
     }
 
     entry
         .set_password(&platform_key)
-        .map_err(|e| format!("Failed to save gateway platform key: {}", e))
+        .map_err(|e| AppError::secure_storage(format!("Failed to save gateway platform key: {}", e)))
 }
 
 #[tauri::command]
@@ -203,7 +197,7 @@ pub fn set_accounts_dir(path: String) -> Result<(), String> {
 
     let mut config = load_config();
     config.accounts_dir = Some(path.clone());
-    save_config(&config)?;
+    save_config(&config).map_err(|e| e.message.clone())?;
 
     if !paths_match(&old_dir, &new_dir) && old_dir.exists() {
         if !new_dir.exists() {

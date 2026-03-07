@@ -4,7 +4,7 @@ import { Button } from './ui';
 export type ViewType = 'accounts' | 'prompts' | 'skills' | 'agents' | 'config' | 'gateway';
 
 interface NavItem {
-  id: ViewType;
+  id: Exclude<ViewType, 'accounts'>;
   label: string;
   icon: React.ReactNode;
   colorClass: string;
@@ -13,6 +13,7 @@ interface NavItem {
 
 interface NavigationBarProps {
   onNavigate: (view: ViewType) => void;
+  onPrefetchView?: (view: Exclude<ViewType, 'accounts'>) => void;
   onSync: () => void;
 }
 
@@ -90,7 +91,7 @@ const itemVariants = {
   visible: { opacity: 1, y: 0 },
 };
 
-export function NavigationBar({ onNavigate, onSync }: NavigationBarProps) {
+export function NavigationBar({ onNavigate, onPrefetchView, onSync }: NavigationBarProps) {
   return (
     <motion.div
       className="flex flex-wrap gap-2"
@@ -105,6 +106,8 @@ export function NavigationBar({ onNavigate, onSync }: NavigationBarProps) {
             size="sm"
             className={`h-8 border border-white/10 bg-gradient-to-r ${item.gradientClass} text-slate-300`}
             onClick={() => onNavigate(item.id)}
+            onMouseEnter={() => onPrefetchView?.(item.id)}
+            onFocus={() => onPrefetchView?.(item.id)}
           >
             <span className={`${item.colorClass}`}>{item.icon}</span>
             <span className="text-xs">{item.label}</span>

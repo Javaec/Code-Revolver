@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { WebDavConfig, SyncSettings, SyncResult, DEFAULT_SYNC_SETTINGS } from '../types';
+import { WebDavConfig, SyncSettings, SyncResult, SyncPreview, DEFAULT_SYNC_SETTINGS } from '../types';
 import { Button, Card } from './ui';
-import { buildWebDavRequestConfig, validateWebDavConfig } from '../lib/webdav';
+import { resolveWebDavRequestConfig, validateWebDavConfig } from '../lib/webdav';
 import { commands } from '../lib/commands';
+import { useNotifications } from '../lib/notificationState';
+import { toErrorMessage } from '../lib/errors';
 
 interface SyncConfirmDialogProps {
   isOpen: boolean;
@@ -34,6 +36,9 @@ export function SyncConfirmDialog({
   const [syncing, setSyncing] = useState(false);
   const [syncDirection, setSyncDirection] = useState<'upload' | 'download' | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [preview, setPreview] = useState<SyncPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const { notifyError } = useNotifications();
 
   const sync = syncSettings || DEFAULT_SYNC_SETTINGS;
 
@@ -42,6 +47,7 @@ export function SyncConfirmDialog({
     if (isOpen) {
       setSyncResult(null);
       setSyncDirection(null);
+      setPreview(null);
     }
   }, [isOpen]);
 
@@ -54,6 +60,38 @@ export function SyncConfirmDialog({
     if (sync.syncConfigToml) items.push('config.toml');
     return items;
   };
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const validationError = validateWebDavConfig(webdavConfig);
+    if (validationError) {
+      setPreview(null);
+      return;
+    }
+
+    const loadPreview = async () => {
+      setPreviewLoading(true);
+      try {
+        const config = await resolveWebDavRequestConfig(webdavConfig);
+        const syncConfig = {
+          syncPrompts: sync.syncPrompts,
+          syncSkills: sync.syncSkills,
+          syncAgentsMd: sync.syncAgentsMd,
+          syncConfigToml: sync.syncConfigToml,
+        };
+        const nextPreview = await commands.previewSync(config, syncConfig, sync.syncAccounts);
+        setPreview(nextPreview);
+      } catch (error) {
+        setPreview(null);
+        notifyError(toErrorMessage(error), 'Sync Preview');
+      } finally {
+        setPreviewLoading(false);
+      }
+    };
+
+    void loadPreview();
+  }, [isOpen, notifyError, sync.syncAccounts, sync.syncAgentsMd, sync.syncConfigToml, sync.syncPrompts, sync.syncSkills, webdavConfig]);
 
   const handleSync = async (direction: 'upload' | 'download') => {
     const validationError = validateWebDavConfig(webdavConfig);
@@ -71,7 +109,7 @@ export function SyncConfirmDialog({
     setSyncResult(null);
 
     try {
-      const config = buildWebDavRequestConfig(webdavConfig);
+      const config = await resolveWebDavRequestConfig(webdavConfig);
 
       const syncConfig = {
         syncPrompts: sync.syncPrompts,
@@ -118,7 +156,7 @@ export function SyncConfirmDialog({
       setSyncResult({
         uploaded: [],
         downloaded: [],
-        errors: [String(error)],
+        errors: [toErrorMessage(error)],
       });
     } finally {
       setSyncing(false);
@@ -129,6 +167,7 @@ export function SyncConfirmDialog({
   const syncItems = getSyncItems();
   const hasItems = syncItems.length > 0;
   const isSuccess = syncResult && syncResult.errors.length === 0;
+  const conflictCount = preview?.conflictCount ?? 0;
 
   return (
     <AnimatePresence>
@@ -232,14 +271,51 @@ export function SyncConfirmDialog({
                 {/* Sync Preview */}
                 {hasItems ? (
                   <div className="rounded-lg border border-white/10 bg-white/5 p-3 mb-4">
-                    <div className="text-xs text-slate-400 mb-2">The following content will be synced:</div>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div className="text-xs text-slate-400">Preview before overwrite</div>
+                      {preview && (
+                        <div className="text-[11px] text-slate-400">
+                          {preview.uploadCount} upload • {preview.downloadCount} download • {preview.conflictCount} conflict
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mb-3">
                       {syncItems.map((item, i) => (
                         <span key={i} className="px-2 py-0.5 text-xs bg-primary-500/20 text-primary-400 rounded-md border border-primary-500/30">
                           {item}
                         </span>
                       ))}
                     </div>
+                    {previewLoading ? (
+                      <div className="text-xs text-slate-500">Building sync preview...</div>
+                    ) : preview ? (
+                      <div className="max-h-40 overflow-y-auto custom-scrollbar rounded-lg border border-white/10 bg-black/10 p-2 text-xs">
+                        {preview.items.length === 0 ? (
+                          <div className="text-slate-500">No remote or local files found for the selected scopes.</div>
+                        ) : (
+                          preview.items.map((item) => (
+                            <div key={`${item.type}:${item.name}`} className="flex items-center justify-between gap-2 py-1">
+                              <div className="min-w-0 truncate text-slate-200">{item.name}</div>
+                              <span
+                                className={`shrink-0 rounded-md border px-2 py-0.5 uppercase tracking-wide ${
+                                  item.action === 'conflict'
+                                    ? 'border-amber-500/30 bg-amber-500/15 text-amber-300'
+                                    : item.action === 'upload'
+                                      ? 'border-cyan-500/30 bg-cyan-500/15 text-cyan-300'
+                                      : item.action === 'download'
+                                        ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300'
+                                        : 'border-white/10 bg-white/5 text-slate-400'
+                                }`}
+                              >
+                                {item.action}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-500">Preview unavailable for the current configuration.</div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center py-4 text-slate-400 text-sm mb-4">
@@ -253,28 +329,28 @@ export function SyncConfirmDialog({
                     variant="default"
                     className="flex-1"
                     onClick={() => handleSync('upload')}
-                    disabled={syncing || !hasItems || !webdavConfig.enabled}
+                    disabled={syncing || previewLoading || !hasItems || !webdavConfig.enabled}
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
-                    {syncing && syncDirection === 'upload' ? 'Uploading...' : 'Upload'}
+                    {syncing && syncDirection === 'upload' ? 'Uploading...' : conflictCount > 0 ? `Upload (${conflictCount} overwrite)` : 'Upload'}
                   </Button>
                   <Button
                     variant="outline"
                     className="flex-1"
                     onClick={() => handleSync('download')}
-                    disabled={syncing || !hasItems || !webdavConfig.enabled}
+                    disabled={syncing || previewLoading || !hasItems || !webdavConfig.enabled}
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
                     </svg>
-                    {syncing && syncDirection === 'download' ? 'Downloading...' : 'Download'}
+                    {syncing && syncDirection === 'download' ? 'Downloading...' : conflictCount > 0 ? `Download (${conflictCount} overwrite)` : 'Download'}
                   </Button>
                 </div>
 
                 <p className="text-xs text-slate-500 text-center mt-3">
-                  Upload will overwrite cloud, download will overwrite local
+                  Conflicts are detected up front. Upload overwrites cloud, download overwrites local.
                 </p>
               </>
             )}

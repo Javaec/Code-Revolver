@@ -15,69 +15,31 @@ import {
 } from './useAccountsModel';
 import { useIntervalTask } from './useIntervalTask';
 import { commands } from '../lib/commands';
-
-const SETTINGS_STORAGE_KEY = 'code_revolver_settings';
-const USAGE_CACHE_KEY = 'code_revolver_usage_cache';
-
-type UsageCacheEntry = {
-    usage: UsageInfo;
-    cachedAt: number;
-};
+import { useNotifications } from '../lib/notificationState';
+import { migrateLegacySecrets, loadStoredSettings, persistSettings } from '../lib/settingsStorage';
+import { loadUsageCache, saveUsageCache } from '../lib/usageCache';
+import { toErrorMessage } from '../lib/errors';
 
 type AccountMutationKind = 'switch' | 'rename' | 'delete' | 'refresh-token';
-
-function loadUsageCache(): Record<string, UsageCacheEntry> {
-    try {
-        const raw = localStorage.getItem(USAGE_CACHE_KEY);
-        if (!raw) return {};
-        return JSON.parse(raw) as Record<string, UsageCacheEntry>;
-    } catch {
-        return {};
-    }
-}
-
-function saveUsageCache(cache: Record<string, UsageCacheEntry>): void {
-    localStorage.setItem(USAGE_CACHE_KEY, JSON.stringify(cache));
-}
-
-function persistSettings(settings: AppSettings): void {
-    const persistedSettings = {
-        ...settings,
-        gateway: {
-            ...settings.gateway,
-            platformKey: '',
-            hasStoredPlatformKey: settings.gateway.hasStoredPlatformKey ?? Boolean(settings.gateway.platformKey),
-        },
-        webdav: settings.webdav ? {
-            ...settings.webdav,
-            password: '',
-            hasStoredPassword: settings.webdav.hasStoredPassword ?? Boolean(settings.webdav.password),
-        } : settings.webdav,
-    };
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(persistedSettings));
-}
+type FailedMutation =
+    | { kind: 'switch' | 'delete' | 'refresh-token'; filePath: string; message: string }
+    | { kind: 'rename'; filePath: string; newName: string; message: string };
 
 export function useAccounts() {
+    const { notifyError, notifyInfo } = useNotifications();
     const [accounts, setAccounts] = useState<AccountInfo[]>([]);
     const [accountsDir, setAccountsDirState] = useState<string>('');
     const [loading, setLoading] = useState(true);
     const [usageLoadingByPath, setUsageLoadingByPath] = useState<Record<string, boolean>>({});
     const [activeAccountMutation, setActiveAccountMutation] = useState<{ filePath: string; kind: AccountMutationKind } | null>(null);
+    const [lastFailedMutation, setLastFailedMutation] = useState<FailedMutation | null>(null);
     const refreshInFlightRef = useRef<Promise<void> | null>(null);
     const refreshQueuedRef = useRef(false);
     const refreshRunIdRef = useRef(0);
     const autoSwitchInFlightRef = useRef(false);
     const accountMutationInFlightRef = useRef(false);
 
-    const [settings, setSettings] = useState<AppSettings>(() => {
-        try {
-            const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
-            if (!saved) return normalizeSettings(DEFAULT_SETTINGS);
-            return normalizeSettings(JSON.parse(saved));
-        } catch {
-            return normalizeSettings(DEFAULT_SETTINGS);
-        }
-    });
+    const [settings, setSettings] = useState<AppSettings>(() => loadStoredSettings());
     const settingsRef = useRef(settings);
 
     useEffect(() => {
@@ -85,60 +47,18 @@ export function useAccounts() {
     }, [settings]);
 
     useEffect(() => {
-        const hydrateWebDavPassword = async () => {
-            const legacyPassword = settingsRef.current.webdav?.password?.trim();
-            const legacyGatewayKey = settingsRef.current.gateway.platformKey?.trim();
-            if (legacyPassword) {
-                try {
-                    await commands.setWebDavPassword(legacyPassword);
-                } catch (error) {
-                    console.error('Failed to migrate WebDAV password to secure storage:', error);
-                }
-
-                setSettings((prev) => {
-                    const next = normalizeSettings({
-                        ...prev,
-                        webdav: {
-                            ...(prev.webdav || DEFAULT_SETTINGS.webdav!),
-                            password: legacyPassword,
-                            hasStoredPassword: true,
-                        },
-                    });
-                    persistSettings(next);
-                    return next;
-                });
-            }
-
+        const migrateSecrets = async () => {
             try {
-                const storedPassword = await commands.getWebDavPassword();
-                const storedGatewayKey = await commands.getGatewayPlatformKey();
-                setSettings((prev) => {
-                    const next = normalizeSettings({
-                        ...prev,
-                        gateway: {
-                            ...prev.gateway,
-                            platformKey: storedGatewayKey ?? legacyGatewayKey ?? '',
-                            hasStoredPlatformKey: Boolean(storedGatewayKey) || Boolean(legacyGatewayKey),
-                        },
-                        webdav: {
-                            ...(prev.webdav || DEFAULT_SETTINGS.webdav!),
-                            password: storedPassword ?? legacyPassword ?? '',
-                            hasStoredPassword: Boolean(storedPassword) || Boolean(legacyPassword),
-                        },
-                    });
-                    persistSettings(next);
-                    return next;
-                });
-                if (legacyGatewayKey) {
-                    await commands.setGatewayPlatformKey(legacyGatewayKey);
-                }
+                const next = await migrateLegacySecrets(settingsRef.current);
+                setSettings(next);
+                persistSettings(next);
             } catch (error) {
-                console.error('Failed to hydrate secrets from secure storage:', error);
+                notifyError(toErrorMessage(error), 'Secure Storage');
             }
         };
 
-        void hydrateWebDavPassword();
-    }, []);
+        void migrateSecrets();
+    }, [notifyError]);
 
     const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
         const nextPassword = newSettings.webdav && Object.prototype.hasOwnProperty.call(newSettings.webdav, 'password')
@@ -150,12 +70,12 @@ export function useAccounts() {
 
         if (nextPassword !== undefined) {
             void commands.setWebDavPassword(nextPassword).catch((error) => {
-                console.error('Failed to persist WebDAV password in secure storage:', error);
+                notifyError(toErrorMessage(error), 'Secure Storage');
             });
         }
         if (nextGatewayKey !== undefined) {
             void commands.setGatewayPlatformKey(nextGatewayKey).catch((error) => {
-                console.error('Failed to persist gateway platform key in secure storage:', error);
+                notifyError(toErrorMessage(error), 'Secure Storage');
             });
         }
 
@@ -167,6 +87,7 @@ export function useAccounts() {
                 ? {
                     ...prev.gateway,
                     ...newSettings.gateway,
+                    platformKey: '',
                     hasStoredPlatformKey: nextGatewayKey !== undefined
                         ? nextGatewayKey.trim().length > 0
                         : newSettings.gateway.hasStoredPlatformKey ?? prev.gateway.hasStoredPlatformKey ?? false,
@@ -176,6 +97,7 @@ export function useAccounts() {
                 ? {
                     ...(prev.webdav || DEFAULT_SETTINGS.webdav!),
                     ...newSettings.webdav,
+                    password: '',
                     hasStoredPassword: nextPassword !== undefined
                         ? nextPassword.trim().length > 0
                         : newSettings.webdav.hasStoredPassword ?? prev.webdav?.hasStoredPassword ?? false,
@@ -197,7 +119,7 @@ export function useAccounts() {
             persistSettings(next);
             return next;
         });
-    }, []);
+    }, [notifyError]);
 
     const fetchUsage = useCallback(async (filePath: string): Promise<UsageInfo> => {
         return await commands.fetchUsage(filePath);
@@ -214,6 +136,7 @@ export function useAccounts() {
 
         accountMutationInFlightRef.current = true;
         setActiveAccountMutation({ filePath, kind });
+        setLastFailedMutation(null);
 
         try {
             return await task();
@@ -322,7 +245,7 @@ export function useAccounts() {
                 });
                 setAccounts(sortAccountsByWeeklyRule(nextAccounts));
             } catch (error) {
-                console.error('Failed to scan accounts:', error);
+                notifyError(toErrorMessage(error), 'Scan Accounts');
             } finally {
                 if (refreshRunId === refreshRunIdRef.current) {
                     setLoading(false);
@@ -338,9 +261,10 @@ export function useAccounts() {
 
         refreshInFlightRef.current = refreshPromise;
         return refreshPromise;
-    }, [fetchUsage, updateSettings]);
+    }, [fetchUsage, notifyError, updateSettings]);
 
     const switchAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
+        const previousAccounts = accounts;
         try {
             await withAccountMutationLock(filePath, 'switch', async () => {
                 await commands.switchAccount(filePath);
@@ -356,9 +280,12 @@ export function useAccounts() {
             });
             return { success: true, message: 'Account switched' };
         } catch (error: unknown) {
-            return { success: false, message: String(error) };
+            setAccounts(previousAccounts);
+            const message = toErrorMessage(error);
+            setLastFailedMutation({ kind: 'switch', filePath, message });
+            return { success: false, message };
         }
-    }, [refresh, withAccountMutationLock]);
+    }, [accounts, refresh, withAccountMutationLock]);
 
     const checkAutoSwitch = useCallback(async (currentAccounts: AccountInfo[]) => {
         if (!settings.enableAutoSwitch) return;
@@ -436,13 +363,12 @@ export function useAccounts() {
             try {
                 await commands.importDefaultAccount();
             } catch (e) {
-                console.error('Failed to import default account:', e);
+                notifyInfo(`Default account import skipped: ${toErrorMessage(e)}`, 'Accounts');
             }
             await refresh();
         };
         init();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [notifyInfo, refresh]);
 
     useIntervalTask(settings.autoCheck, settings.checkInterval * 60 * 1000, () => {
         void refresh();
@@ -478,9 +404,10 @@ export function useAccounts() {
             });
             return { success: true };
         } catch (error: unknown) {
-            console.error("Rename failed:", error);
             await refresh(); // Force sync
-            return { success: false, message: String(error) };
+            const message = toErrorMessage(error);
+            setLastFailedMutation({ kind: 'rename', filePath: oldPath, newName, message });
+            return { success: false, message };
         }
     }, [accounts, refresh, withAccountMutationLock]);
 
@@ -489,11 +416,12 @@ export function useAccounts() {
             await commands.setAccountsDir(path);
             await new Promise(resolve => setTimeout(resolve, 500));
             await refresh();
+            notifyInfo('Accounts directory updated', 'Accounts');
             return { success: true };
         } catch (error: unknown) {
-            return { success: false, message: String(error) };
+            return { success: false, message: toErrorMessage(error) };
         }
-    }, [refresh]);
+    }, [notifyInfo, refresh]);
 
     const addAccount = useCallback(async (name: string, content: string): Promise<MutationResult> => {
         try {
@@ -501,11 +429,12 @@ export function useAccounts() {
             // Add a small delay to ensure FS is flushed before scanning
             await new Promise(resolve => setTimeout(resolve, 500));
             await refresh();
+            notifyInfo(`Added account "${name}"`, 'Accounts');
             return { success: true };
         } catch (error: unknown) {
-            return { success: false, message: String(error) };
+            return { success: false, message: toErrorMessage(error) };
         }
-    }, [refresh]);
+    }, [notifyInfo, refresh]);
 
     const deleteAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
         try {
@@ -516,7 +445,9 @@ export function useAccounts() {
             });
             return { success: true };
         } catch (error: unknown) {
-            return { success: false, message: String(error) };
+            const message = toErrorMessage(error);
+            setLastFailedMutation({ kind: 'delete', filePath, message });
+            return { success: false, message };
         }
     }, [refresh, withAccountMutationLock]);
 
@@ -529,7 +460,9 @@ export function useAccounts() {
             });
             return { success: true, message };
         } catch (error: unknown) {
-            return { success: false, message: String(error) };
+            const message = toErrorMessage(error);
+            setLastFailedMutation({ kind: 'refresh-token', filePath, message });
+            return { success: false, message };
         }
     }, [refresh, withAccountMutationLock]);
 
@@ -556,12 +489,30 @@ export function useAccounts() {
         return { success: true };
     }, [updateSettings]);
 
+    const retryLastFailedMutation = useCallback(async (): Promise<void> => {
+        if (!lastFailedMutation) return;
+        if (lastFailedMutation.kind === 'rename') {
+            await renameAccount(lastFailedMutation.filePath, lastFailedMutation.newName);
+            return;
+        }
+        if (lastFailedMutation.kind === 'switch') {
+            await switchAccount(lastFailedMutation.filePath);
+            return;
+        }
+        if (lastFailedMutation.kind === 'delete') {
+            await deleteAccount(lastFailedMutation.filePath);
+            return;
+        }
+        await refreshAccountToken(lastFailedMutation.filePath);
+    }, [deleteAccount, lastFailedMutation, refreshAccountToken, renameAccount, switchAccount]);
+
     return {
         accounts,
         accountsDir,
         loading,
         usageLoadingByPath,
         activeAccountMutation,
+        lastFailedMutation,
         settings,
         updateSettings,
         refresh,
@@ -575,5 +526,7 @@ export function useAccounts() {
         bestCandidateFilePath,
         rankedCandidates,
         updateAccountPoolMetadata,
+        retryLastFailedMutation,
+        dismissLastFailedMutation: () => setLastFailedMutation(null),
     };
 }

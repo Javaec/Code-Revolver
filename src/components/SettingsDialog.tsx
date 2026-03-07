@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AppSettings, DEFAULT_SETTINGS, MutationResult } from '../types';
+import { AppSettings, DEFAULT_SETTINGS, MutationResult, WebDavConfig } from '../types';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button, Card } from './ui';
-import { buildWebDavRequestConfig, validateWebDavConfig } from '../lib/webdav';
+import { resolveWebDavRequestConfig, validateWebDavConfig } from '../lib/webdav';
 import { SettingsGeneralTab } from './settings/SettingsGeneralTab';
 import { SettingsSyncTab } from './settings/SettingsSyncTab';
 import { commands } from '../lib/commands';
+import { useNotifications } from '../lib/notificationState';
+import { toErrorMessage } from '../lib/errors';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -43,15 +45,57 @@ export function SettingsDialog({
   const [webdavTesting, setWebdavTesting] = useState(false);
   const [webdavMessage, setWebdavMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showWebdavPassword, setShowWebdavPassword] = useState(false);
-
-  const webdav = settings.webdav || DEFAULT_SETTINGS.webdav!;
+  const [loadingWebdavPassword, setLoadingWebdavPassword] = useState(false);
+  const [webdavDraft, setWebdavDraft] = useState<WebDavConfig>(settings.webdav || DEFAULT_SETTINGS.webdav!);
+  const [debugLogging, setDebugLogging] = useState(false);
+  const [debugLoggingBusy, setDebugLoggingBusy] = useState(false);
+  const { notifyError, notifySuccess } = useNotifications();
 
   useEffect(() => {
     if (isOpen) {
       setLocalDir(accountsDir);
+      setWebdavDraft(settings.webdav || DEFAULT_SETTINGS.webdav!);
       setWebdavMessage(null);
+      void commands.getAppConfig()
+        .then((config) => setDebugLogging(config.debugLogging))
+        .catch((error) => notifyError(toErrorMessage(error), 'Debug Logging'));
+    } else {
+      setShowWebdavPassword(false);
+      setWebdavDraft((prev) => ({ ...prev, password: '' }));
     }
-  }, [isOpen, accountsDir]);
+  }, [accountsDir, isOpen, notifyError, settings.webdav]);
+
+  const handleUpdateWebDav = (updates: Partial<WebDavConfig>) => {
+    setWebdavDraft((prev) => {
+      const next = { ...prev, ...updates };
+      onUpdateSettings({ webdav: next });
+      return next;
+    });
+  };
+
+  const handleToggleShowPassword = async () => {
+    const next = !showWebdavPassword;
+    setShowWebdavPassword(next);
+    if (!next) {
+      setWebdavDraft((prev) => ({ ...prev, password: '' }));
+      return;
+    }
+    if (webdavDraft.password || !webdavDraft.hasStoredPassword) {
+      return;
+    }
+
+    setLoadingWebdavPassword(true);
+    try {
+      const password = await commands.getWebDavPassword();
+      if (password) {
+        setWebdavDraft((prev) => ({ ...prev, password }));
+      }
+    } catch (error) {
+      notifyError(toErrorMessage(error), 'WebDAV Password');
+    } finally {
+      setLoadingWebdavPassword(false);
+    }
+  };
 
   const handleSaveDir = async () => {
     if (localDir) await onSetAccountsDir(localDir);
@@ -71,7 +115,7 @@ export function SettingsDialog({
   };
 
   const handleTestConnection = async () => {
-    const validationError = validateWebDavConfig(webdav);
+    const validationError = validateWebDavConfig(webdavDraft);
     if (validationError) {
       setWebdavMessage({ type: 'error', text: validationError });
       return;
@@ -80,12 +124,25 @@ export function SettingsDialog({
     setWebdavTesting(true);
     setWebdavMessage(null);
     try {
-      const result = await commands.testWebDavConnection(buildWebDavRequestConfig(webdav));
+      const result = await commands.testWebDavConnection(await resolveWebDavRequestConfig(webdavDraft));
       setWebdavMessage({ type: 'success', text: result });
     } catch (e: unknown) {
-      setWebdavMessage({ type: 'error', text: String(e) });
+      setWebdavMessage({ type: 'error', text: toErrorMessage(e) });
     } finally {
       setWebdavTesting(false);
+    }
+  };
+
+  const handleToggleDebugLogging = async (enabled: boolean) => {
+    setDebugLoggingBusy(true);
+    try {
+      const config = await commands.setDebugLogging(enabled);
+      setDebugLogging(config.debugLogging);
+      notifySuccess(enabled ? 'Structured debug logging enabled' : 'Structured debug logging disabled', 'Debug Logging');
+    } catch (error) {
+      notifyError(toErrorMessage(error), 'Debug Logging');
+    } finally {
+      setDebugLoggingBusy(false);
     }
   };
 
@@ -142,18 +199,24 @@ export function SettingsDialog({
                 <SettingsGeneralTab
                   localDir={localDir}
                   settings={settings}
+                  debugLogging={debugLogging}
+                  debugLoggingBusy={debugLoggingBusy}
                   onLocalDirChange={setLocalDir}
                   onBrowseDir={handleBrowseDir}
                   onSaveDir={handleSaveDir}
+                  onToggleDebugLogging={handleToggleDebugLogging}
                   onUpdateSettings={onUpdateSettings}
                 />
               ) : (
                 <SettingsSyncTab
                   settings={settings}
+                  webdav={webdavDraft}
                   webdavTesting={webdavTesting}
                   webdavMessage={webdavMessage}
+                  loadingWebdavPassword={loadingWebdavPassword}
                   showWebdavPassword={showWebdavPassword}
-                  onToggleShowPassword={() => setShowWebdavPassword((value) => !value)}
+                  onToggleShowPassword={handleToggleShowPassword}
+                  onUpdateWebDav={handleUpdateWebDav}
                   onUpdateSettings={onUpdateSettings}
                   onTestConnection={handleTestConnection}
                 />

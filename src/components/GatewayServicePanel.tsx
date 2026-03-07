@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { GatewaySettings } from '../types';
 import { Badge, Button, Card, Input } from './ui';
 import { useIntervalTask } from '../hooks/useIntervalTask';
+import { useGatewayService } from '../hooks/useGatewayService';
+import { validateGatewaySettings } from '../lib/gateway';
 
 interface GatewayServicePanelProps {
   gateway: GatewaySettings;
@@ -20,7 +22,16 @@ function formatLastPing(timestamp?: number): string {
 }
 
 export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayServicePanelProps) {
-  const [showKey, setShowKey] = useState(false);
+  const {
+    showKey,
+    platformKeyInput,
+    loadingPlatformKey,
+    statusLabel,
+    setShowKey,
+    setPlatformKeyInput,
+    loadPlatformKey,
+    pingGateway,
+  } = useGatewayService({ gateway, onUpdateGateway });
 
   useIntervalTask(gateway.enabled, Math.max(15, gateway.keepAliveIntervalSec) * 1000, () => {
     onUpdateGateway({
@@ -29,12 +40,7 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
     });
   });
 
-  const statusLabel = useMemo(() => {
-    if (!gateway.enabled) return 'Stopped';
-    if (gateway.status === 'online') return 'Online';
-    if (gateway.status === 'offline') return 'Offline';
-    return 'Idle';
-  }, [gateway.enabled, gateway.status]);
+  const validationError = useMemo(() => validateGatewaySettings(gateway), [gateway]);
 
   return (
     <Card className="p-4 border-blue-500/20 bg-gradient-to-br from-blue-500/10 via-slate-900/40 to-slate-900/50">
@@ -93,13 +99,14 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
         <div className="flex gap-2">
           <Input
             type={showKey ? 'text' : 'password'}
-            value={gateway.platformKey}
-            onChange={(e) => onUpdateGateway({ platformKey: e.target.value })}
+            value={platformKeyInput}
+            onFocus={() => void loadPlatformKey()}
+            onChange={(e) => setPlatformKeyInput(e.target.value)}
             className="h-8 text-xs"
-            placeholder="pk_live_..."
+            placeholder={gateway.hasStoredPlatformKey && !platformKeyInput ? 'Stored in secure storage' : 'pk_live_...'}
           />
-          <Button variant="outline" size="sm" className="h-8 px-3 text-xs" onClick={() => setShowKey((value) => !value)}>
-            {showKey ? 'Hide' : 'Show'}
+          <Button variant="outline" size="sm" className="h-8 px-3 text-xs" onClick={() => void setShowKey()}>
+            {loadingPlatformKey ? 'Loading...' : showKey ? 'Hide' : 'Show'}
           </Button>
         </div>
       </div>
@@ -131,7 +138,7 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
             variant="outline"
             size="sm"
             className="h-8 px-3 text-xs border-blue-500/25 text-blue-300 hover:bg-blue-500/10"
-            onClick={() => onUpdateGateway({ status: 'online', lastKeepAliveAt: Date.now() })}
+            onClick={pingGateway}
           >
             Ping
           </Button>
@@ -141,7 +148,7 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
             className="h-8 px-3 text-xs"
             onClick={() => onUpdateGateway({
               enabled: !gateway.enabled,
-              status: gateway.enabled ? 'idle' : 'online',
+              status: gateway.enabled ? 'idle' : validationError ? 'offline' : 'online',
               lastKeepAliveAt: gateway.enabled ? gateway.lastKeepAliveAt : Date.now(),
             })}
           >
@@ -149,6 +156,12 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
           </Button>
         </div>
       </div>
+
+      {validationError && (
+        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          {validationError}
+        </div>
+      )}
     </Card>
   );
 }

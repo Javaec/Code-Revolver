@@ -141,3 +141,26 @@ pub fn resolve_managed_account_path(file_path: &str, accounts_dir: &PathBuf) -> 
 
     Ok(resolved_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_managed_account_path;
+    use std::fs;
+
+    #[test]
+    fn rejects_paths_outside_accounts_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let accounts_dir = temp.path().join("accounts");
+        let outside_dir = temp.path().join("outside");
+        fs::create_dir_all(&accounts_dir).expect("accounts dir");
+        fs::create_dir_all(&outside_dir).expect("outside dir");
+
+        let inside_file = accounts_dir.join("inside.json");
+        let outside_file = outside_dir.join("outside.json");
+        fs::write(&inside_file, "{}").expect("inside file");
+        fs::write(&outside_file, "{}").expect("outside file");
+
+        assert!(resolve_managed_account_path(inside_file.to_string_lossy().as_ref(), &accounts_dir).is_ok());
+        assert!(resolve_managed_account_path(outside_file.to_string_lossy().as_ref(), &accounts_dir).is_err());
+    }
+}

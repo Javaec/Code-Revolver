@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { showError } from '../lib/dialogs';
+import { useNotifications } from '../lib/notificationState';
+import { toErrorMessage } from '../lib/errors';
 
 interface TextDocumentEditorOptions {
   load: () => Promise<string>;
@@ -8,6 +9,7 @@ interface TextDocumentEditorOptions {
 }
 
 export function useTextDocumentEditor({ load, save, saveTitle }: TextDocumentEditorOptions) {
+  const { notifyError, notifySuccess } = useNotifications();
   const [content, setContent] = useState('');
   const [editContent, setEditContent] = useState('');
   const [loading, setLoading] = useState(true);
@@ -21,12 +23,11 @@ export function useTextDocumentEditor({ load, save, saveTitle }: TextDocumentEdi
       setContent(result);
       setEditContent(result);
     } catch (error) {
-      console.error(`Failed to load ${saveTitle}:`, error);
-      await showError(error, `Load ${saveTitle}`);
+      notifyError(toErrorMessage(error), `Load ${saveTitle}`);
     } finally {
       setLoading(false);
     }
-  }, [load, saveTitle]);
+  }, [load, notifyError, saveTitle]);
 
   useEffect(() => {
     void loadContent();
@@ -38,13 +39,13 @@ export function useTextDocumentEditor({ load, save, saveTitle }: TextDocumentEdi
       await save(editContent);
       setContent(editContent);
       setIsEditing(false);
+      notifySuccess(`${saveTitle} saved`, saveTitle);
     } catch (error) {
-      console.error(`Save failed for ${saveTitle}:`, error);
-      await showError(error, `Save ${saveTitle}`);
+      notifyError(toErrorMessage(error), `Save ${saveTitle}`);
     } finally {
       setSaving(false);
     }
-  }, [editContent, save, saveTitle]);
+  }, [editContent, notifyError, notifySuccess, save, saveTitle]);
 
   const cancelEditing = useCallback(() => {
     setEditContent(content);

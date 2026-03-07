@@ -1,13 +1,19 @@
 mod account_files;
 mod accounts;
 mod codex_content;
+mod config;
 mod desktop_shell;
+mod error;
+mod trace;
+mod webdav_plan;
+mod webdav_propfind;
 mod webdav_sync;
 
 use accounts::*;
+use config::*;
 use codex_content::*;
+use error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::PathBuf;
 use webdav_sync::*;
 
@@ -55,11 +61,6 @@ pub struct ScanResult {
     pub accounts_dir: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AppConfig {
-    pub accounts_dir: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptInfo {
     pub name: String,
@@ -84,33 +85,6 @@ pub struct SkillInfo {
     pub has_assets: bool,
     #[serde(rename = "hasReferences")]
     pub has_references: bool,
-}
-
-fn get_config_file() -> PathBuf {
-    let home = dirs::home_dir().expect("Failed to get home directory");
-    home.join(".myswitch").join("config.json")
-}
-
-pub(crate) fn load_config() -> AppConfig {
-    let config_path = get_config_file();
-    if config_path.exists() {
-        if let Ok(content) = fs::read_to_string(&config_path) {
-            if let Ok(config) = serde_json::from_str(&content) {
-                return config;
-            }
-        }
-    }
-    AppConfig::default()
-}
-
-pub(crate) fn save_config(config: &AppConfig) -> Result<(), String> {
-    let config_path = get_config_file();
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    fs::write(config_path, content).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 pub(crate) fn get_accounts_dir() -> PathBuf {
@@ -148,14 +122,14 @@ const WEBDAV_SECRET_ACCOUNT: &str = "webdav";
 const GATEWAY_SECRET_SERVICE: &str = "code-revolver";
 const GATEWAY_SECRET_ACCOUNT: &str = "gateway-platform-key";
 
-pub(crate) fn webdav_password_entry() -> Result<keyring::Entry, String> {
+pub(crate) fn webdav_password_entry() -> AppResult<keyring::Entry> {
     keyring::Entry::new(WEBDAV_SECRET_SERVICE, WEBDAV_SECRET_ACCOUNT)
-        .map_err(|e| format!("Failed to initialize secure password storage: {}", e))
+        .map_err(|e| AppError::secure_storage(format!("Failed to initialize secure password storage: {}", e)))
 }
 
-pub(crate) fn gateway_platform_key_entry() -> Result<keyring::Entry, String> {
+pub(crate) fn gateway_platform_key_entry() -> AppResult<keyring::Entry> {
     keyring::Entry::new(GATEWAY_SECRET_SERVICE, GATEWAY_SECRET_ACCOUNT)
-        .map_err(|e| format!("Failed to initialize secure gateway key storage: {}", e))
+        .map_err(|e| AppError::secure_storage(format!("Failed to initialize secure gateway key storage: {}", e)))
 }
 
 fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
@@ -234,6 +208,7 @@ pub fn run() {
             fetch_usage,
             rename_account,
             get_app_config,
+            set_debug_logging,
             get_webdav_password,
             set_webdav_password,
             get_gateway_platform_key,
@@ -245,6 +220,7 @@ pub fn run() {
             update_account_content,
             webdav_sync_upload,
             webdav_sync_download,
+            webdav_sync_preview,
             webdav_test_connection,
             scan_prompts,
             scan_skills,

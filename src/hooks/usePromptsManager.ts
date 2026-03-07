@@ -1,9 +1,12 @@
 import { startTransition, useCallback, useEffect, useState } from 'react';
 import { PromptInfo } from '../types';
-import { confirmAction, showError } from '../lib/dialogs';
+import { confirmAction } from '../lib/dialogs';
 import { commands } from '../lib/commands';
+import { useNotifications } from '../lib/notificationState';
+import { toErrorMessage } from '../lib/errors';
 
 export function usePromptsManager() {
+  const { notifyError, notifySuccess } = useNotifications();
   const [prompts, setPrompts] = useState<PromptInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPrompt, setSelectedPrompt] = useState<PromptInfo | null>(null);
@@ -22,12 +25,11 @@ export function usePromptsManager() {
         setPrompts(result);
       });
     } catch (error) {
-      console.error('Failed to load prompts:', error);
-      await showError(error, 'Load Prompts');
+      notifyError(toErrorMessage(error), 'Load Prompts');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [notifyError]);
 
   useEffect(() => {
     void loadPrompts();
@@ -47,11 +49,11 @@ export function usePromptsManager() {
       await commands.savePromptContent(selectedPrompt.filePath, editContent);
       await loadPrompts();
       setIsEditing(false);
+      notifySuccess(`Saved "${selectedPrompt.name}"`, 'Prompts');
     } catch (error) {
-      console.error('Save failed:', error);
-      await showError(error, 'Save Prompt');
+      notifyError(toErrorMessage(error), 'Save Prompt');
     }
-  }, [editContent, loadPrompts, selectedPrompt]);
+  }, [editContent, loadPrompts, notifyError, notifySuccess, selectedPrompt]);
 
   const handleDelete = useCallback(async (prompt: PromptInfo) => {
     if (!await confirmAction(`Delete prompt "${prompt.name}"?`, 'Delete Prompt')) return;
@@ -61,11 +63,11 @@ export function usePromptsManager() {
         setSelectedPrompt(null);
       }
       await loadPrompts();
+      notifySuccess(`Deleted "${prompt.name}"`, 'Prompts');
     } catch (error) {
-      console.error('Delete failed:', error);
-      await showError(error, 'Delete Prompt');
+      notifyError(toErrorMessage(error), 'Delete Prompt');
     }
-  }, [loadPrompts, selectedPrompt]);
+  }, [loadPrompts, notifyError, notifySuccess, selectedPrompt]);
 
   const closeCreateDialog = useCallback(() => {
     setIsCreating(false);
@@ -84,11 +86,11 @@ export function usePromptsManager() {
       );
       closeCreateDialog();
       await loadPrompts();
+      notifySuccess(`Created "${newName.trim()}"`, 'Prompts');
     } catch (error) {
-      console.error('Create failed:', error);
-      await showError(error, 'Create Prompt');
+      notifyError(toErrorMessage(error), 'Create Prompt');
     }
-  }, [closeCreateDialog, loadPrompts, newContent, newDescription, newName]);
+  }, [closeCreateDialog, loadPrompts, newContent, newDescription, newName, notifyError, notifySuccess]);
 
   return {
     prompts,

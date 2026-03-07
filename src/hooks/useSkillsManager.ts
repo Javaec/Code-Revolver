@@ -1,9 +1,12 @@
 import { startTransition, useCallback, useEffect, useState } from 'react';
 import { SkillInfo } from '../types';
-import { confirmAction, showError } from '../lib/dialogs';
+import { confirmAction } from '../lib/dialogs';
 import { commands } from '../lib/commands';
+import { useNotifications } from '../lib/notificationState';
+import { toErrorMessage } from '../lib/errors';
 
 export function useSkillsManager() {
+  const { notifyError, notifySuccess } = useNotifications();
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
@@ -21,12 +24,11 @@ export function useSkillsManager() {
         setSkills(result);
       });
     } catch (error) {
-      console.error('Failed to load skills:', error);
-      await showError(error, 'Load Skills');
+      notifyError(toErrorMessage(error), 'Load Skills');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [notifyError]);
 
   useEffect(() => {
     void loadSkills();
@@ -41,11 +43,10 @@ export function useSkillsManager() {
       const content = await commands.readSkillContent(skill.dirPath);
       setEditContent(content);
     } catch (error) {
-      console.error('Failed to read SKILL.md:', error);
       setEditContent('');
-      await showError(error, 'Read Skill');
+      notifyError(toErrorMessage(error), 'Read Skill');
     }
-  }, []);
+  }, [notifyError]);
 
   const handleSave = useCallback(async () => {
     if (!selectedSkill) return;
@@ -53,11 +54,11 @@ export function useSkillsManager() {
       await commands.saveSkillContent(selectedSkill.dirPath, editContent);
       await loadSkills();
       setIsEditing(false);
+      notifySuccess(`Saved "${selectedSkill.name}"`, 'Skills');
     } catch (error) {
-      console.error('Save failed:', error);
-      await showError(error, 'Save Skill');
+      notifyError(toErrorMessage(error), 'Save Skill');
     }
-  }, [editContent, loadSkills, selectedSkill]);
+  }, [editContent, loadSkills, notifyError, notifySuccess, selectedSkill]);
 
   const handleDelete = useCallback(async (skill: SkillInfo) => {
     if (!await confirmAction(`Delete skill "${skill.name}" and its entire directory?`, 'Delete Skill')) return;
@@ -67,11 +68,11 @@ export function useSkillsManager() {
         setSelectedSkill(null);
       }
       await loadSkills();
+      notifySuccess(`Deleted "${skill.name}"`, 'Skills');
     } catch (error) {
-      console.error('Delete failed:', error);
-      await showError(error, 'Delete Skill');
+      notifyError(toErrorMessage(error), 'Delete Skill');
     }
-  }, [loadSkills, selectedSkill]);
+  }, [loadSkills, notifyError, notifySuccess, selectedSkill]);
 
   const closeCreateDialog = useCallback(() => {
     setIsCreating(false);
@@ -88,11 +89,11 @@ export function useSkillsManager() {
       );
       closeCreateDialog();
       await loadSkills();
+      notifySuccess(`Created "${newName.trim()}"`, 'Skills');
     } catch (error) {
-      console.error('Create failed:', error);
-      await showError(error, 'Create Skill');
+      notifyError(toErrorMessage(error), 'Create Skill');
     }
-  }, [closeCreateDialog, loadSkills, newDescription, newName]);
+  }, [closeCreateDialog, loadSkills, newDescription, newName, notifyError, notifySuccess]);
 
   const handleCancelEdit = useCallback(async () => {
     if (!selectedSkill) return;

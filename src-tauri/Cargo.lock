@@ -478,6 +478,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "keyring",
+ "quick-xml",
  "reqwest",
  "serde",
  "serde_json",
@@ -485,6 +486,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tempfile",
  "tokio",
  "urlencoding",
 ]

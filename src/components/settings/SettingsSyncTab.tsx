@@ -1,14 +1,19 @@
-import { AppSettings, DEFAULT_SETTINGS, DEFAULT_SYNC_SETTINGS } from '../../types';
+import { AppSettings, DEFAULT_SYNC_SETTINGS, WebDavConfig } from '../../types';
 import { hasWebDavCredentials } from '../../lib/webdav';
 import { Button, Input } from '../ui';
 import { commands } from '../../lib/commands';
+import { useNotifications } from '../../lib/notificationState';
+import { toErrorMessage } from '../../lib/errors';
 
 interface SettingsSyncTabProps {
   settings: AppSettings;
+  webdav: WebDavConfig;
   webdavTesting: boolean;
   webdavMessage: { type: 'success' | 'error'; text: string } | null;
+  loadingWebdavPassword: boolean;
   showWebdavPassword: boolean;
   onToggleShowPassword: () => void;
+  onUpdateWebDav: (updates: Partial<WebDavConfig>) => void;
   onUpdateSettings: (settings: Partial<AppSettings>) => void;
   onTestConnection: () => void | Promise<void>;
 }
@@ -31,20 +36,21 @@ function formatLastSyncTime(timestamp?: number): string {
 
 export function SettingsSyncTab({
   settings,
+  webdav,
   webdavTesting,
   webdavMessage,
+  loadingWebdavPassword,
   showWebdavPassword,
   onToggleShowPassword,
+  onUpdateWebDav,
   onUpdateSettings,
   onTestConnection,
 }: SettingsSyncTabProps) {
-  const webdav = settings.webdav || DEFAULT_SETTINGS.webdav!;
   const sync = settings.sync || DEFAULT_SYNC_SETTINGS;
+  const { notifyError } = useNotifications();
 
   const updateWebdav = (updates: Partial<typeof webdav>) => {
-    onUpdateSettings({
-      webdav: { ...webdav, ...updates },
-    });
+    onUpdateWebDav(updates);
   };
 
   const updateSync = (updates: Partial<typeof sync>) => {
@@ -64,7 +70,7 @@ export function SettingsSyncTab({
             try {
               await commands.openCodexDir();
             } catch (e) {
-              console.error('Failed to open directory:', e);
+              notifyError(toErrorMessage(e), 'Open Directory');
             }
           }}
         >
@@ -132,11 +138,11 @@ export function SettingsSyncTab({
                   type={showWebdavPassword ? 'text' : 'password'}
                   value={webdav.password}
                   onChange={(e) => updateWebdav({ password: e.target.value })}
-                  placeholder="App-specific password"
+                  placeholder={webdav.hasStoredPassword && !webdav.password ? 'Stored in secure storage' : 'App-specific password'}
                   className="text-sm flex-1"
                 />
                 <Button variant="outline" size="sm" onClick={onToggleShowPassword}>
-                  {showWebdavPassword ? 'Hide' : 'Show'}
+                  {loadingWebdavPassword ? 'Loading...' : showWebdavPassword ? 'Hide' : 'Show'}
                 </Button>
               </div>
             </div>

@@ -4,18 +4,24 @@ import { Button, Input } from '../ui';
 interface SettingsGeneralTabProps {
   localDir: string;
   settings: AppSettings;
+  debugLogging: boolean;
+  debugLoggingBusy: boolean;
   onLocalDirChange: (value: string) => void;
   onBrowseDir: () => void | Promise<void>;
   onSaveDir: () => void | Promise<void>;
+  onToggleDebugLogging: (enabled: boolean) => void | Promise<void>;
   onUpdateSettings: (settings: Partial<AppSettings>) => void;
 }
 
 export function SettingsGeneralTab({
   localDir,
   settings,
+  debugLogging,
+  debugLoggingBusy,
   onLocalDirChange,
   onBrowseDir,
   onSaveDir,
+  onToggleDebugLogging,
   onUpdateSettings,
 }: SettingsGeneralTabProps) {
   return (
@@ -108,6 +114,25 @@ export function SettingsGeneralTab({
           <p className="text-xs text-slate-500">For example, if set to 5, it will switch when remaining quota is &lt;= 5%</p>
         </div>
       )}
+
+      <div className="h-px bg-white/10" />
+
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="font-medium text-slate-200">Structured Debug Logging</div>
+          <div className="text-xs text-slate-400">Write backend trace events to stderr in JSON form</div>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            className="sr-only peer"
+            checked={debugLogging}
+            disabled={debugLoggingBusy}
+            onChange={(e) => void onToggleDebugLogging(e.target.checked)}
+          />
+          <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-amber-500/50 rounded-full peer peer-disabled:opacity-60 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600" />
+        </label>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { WebDavConfig } from '../types';
+import { commands } from './commands';
 
 export interface WebDavRequestConfig {
   url: string;
@@ -59,4 +60,20 @@ export function buildWebDavRequestConfig(config: WebDavConfig): WebDavRequestCon
     password: config.password,
     remotePath: normalizeWebDavRemotePath(config.remotePath),
   };
+}
+
+export async function resolveWebDavRequestConfig(config: WebDavConfig): Promise<WebDavRequestConfig> {
+  if (config.password.trim().length > 0) {
+    return buildWebDavRequestConfig(config);
+  }
+
+  if (!config.hasStoredPassword) {
+    return buildWebDavRequestConfig(config);
+  }
+
+  const storedPassword = await commands.getWebDavPassword();
+  return buildWebDavRequestConfig({
+    ...config,
+    password: storedPassword ?? '',
+  });
 }

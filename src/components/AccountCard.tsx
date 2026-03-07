@@ -4,7 +4,9 @@ import { AccountInfo, MutationResult } from '../types';
 import { Badge, Button, Card, Input, LinearProgress } from './ui';
 import { getAccountCardVariant, getPlanBadgeClasses } from '../utils/account';
 import { formatRelativeTime } from '../utils/progress';
-import { confirmAction, showError, showInfo } from '../lib/dialogs';
+import { confirmAction } from '../lib/dialogs';
+import { useNotifications } from '../lib/notificationState';
+import { toErrorMessage } from '../lib/errors';
 
 interface AccountCardProps {
   account: AccountInfo;
@@ -37,6 +39,7 @@ export function AccountCard({
   clockTickMs,
   renameAccount,
 }: AccountCardProps) {
+  const { notifyError, notifySuccess } = useNotifications();
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(account.name);
 
@@ -100,7 +103,7 @@ export function AccountCard({
       try {
         await renameAccount(account.filePath, newName.trim());
       } catch (error) {
-        console.error('Rename failed:', error);
+        notifyError(toErrorMessage(error), 'Rename Account');
         setNewName(account.name);
       }
     } else {
@@ -124,13 +127,13 @@ export function AccountCard({
     const result = await onRefreshToken();
     if (result.success) {
       if (result.message) {
-        await showInfo(result.message, 'Token Refresh');
+        notifySuccess(result.message, 'Token Refresh');
       }
       return;
     }
 
     if (result.message) {
-      await showError(`Refresh failed: ${result.message}`, 'Token Refresh');
+      notifyError(`Refresh failed: ${result.message}`, 'Token Refresh');
     }
   };
 
@@ -139,14 +142,14 @@ export function AccountCard({
     if (!await confirmAction(`Delete account "${account.name}"?`, 'Delete Account')) return;
     const result = await onDelete();
     if (!result.success && result.message) {
-      await showError(result.message, 'Delete Account');
+      notifyError(result.message, 'Delete Account');
     }
   };
 
   const handleSwitch = async () => {
     const result = await onSwitch();
     if (!result.success && result.message) {
-      await showError(result.message, 'Switch Account');
+      notifyError(result.message, 'Switch Account');
     }
   };
 

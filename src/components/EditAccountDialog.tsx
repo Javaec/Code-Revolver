@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AccountInfo } from '../types';
 import { Button, Card } from './ui';
 import { commands } from '../lib/commands';
+import { toErrorMessage } from '../lib/errors';
 
 interface EditAccountDialogProps {
   isOpen: boolean;
@@ -37,7 +38,7 @@ export function EditAccountDialog({ isOpen, onClose, account, onSave }: EditAcco
       const content = await commands.readAccountContent(account.filePath);
       setJsonContent(content);
     } catch (e: unknown) {
-      setError(String(e));
+      setError(toErrorMessage(e));
     } finally {
       setLoadingContent(false);
     }
@@ -69,7 +70,7 @@ export function EditAccountDialog({ isOpen, onClose, account, onSave }: EditAcco
       onSave();
       onClose();
     } catch (e: unknown) {
-      setError(String(e));
+      setError(toErrorMessage(e));
     } finally {
       setLoading(false);
     }

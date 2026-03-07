@@ -1,10 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useTextDocumentEditor } from './useTextDocumentEditor';
+import { NotificationsProvider } from '../lib/notifications';
 
-vi.mock('../lib/dialogs', () => ({
-  showError: vi.fn(),
-}));
+function wrapper({ children }: { children: React.ReactNode }) {
+  return <NotificationsProvider>{children}</NotificationsProvider>;
+}
 
 describe('useTextDocumentEditor', () => {
   it('loads content on mount', async () => {
@@ -15,7 +16,7 @@ describe('useTextDocumentEditor', () => {
       load,
       save,
       saveTitle: 'TestDoc',
-    }));
+    }), { wrapper });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -34,7 +35,7 @@ describe('useTextDocumentEditor', () => {
       load,
       save,
       saveTitle: 'TestDoc',
-    }));
+    }), { wrapper });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);

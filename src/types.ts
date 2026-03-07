@@ -54,6 +54,12 @@ export interface ScanResult {
     accountsDir: string;
 }
 
+export interface BackendAppConfig {
+    version: number;
+    accountsDir?: string;
+    debugLogging: boolean;
+}
+
 export interface WebDavConfig {
     enabled: boolean;
     url: string;        // https://dav.jianguoyun.com/dav/

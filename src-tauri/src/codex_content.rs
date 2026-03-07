@@ -316,3 +316,33 @@ pub fn open_codex_dir() -> Result<String, String> {
 
     Ok(dir.to_string_lossy().to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_path_within, sanitize_leaf_name};
+    use std::fs;
+
+    #[test]
+    fn sanitize_leaf_name_rejects_path_traversal() {
+        assert!(sanitize_leaf_name("../danger").is_err());
+        assert!(sanitize_leaf_name("folder\\file").is_err());
+        assert_eq!(sanitize_leaf_name("skill-name").expect("sanitized"), "skill-name");
+    }
+
+    #[test]
+    fn resolve_path_within_blocks_paths_outside_base_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        let other_dir = temp.path().join("other");
+        fs::create_dir_all(&base_dir).expect("base dir");
+        fs::create_dir_all(&other_dir).expect("other dir");
+
+        let inside = base_dir.join("AGENTS.MD");
+        let outside = other_dir.join("config.toml");
+        fs::write(&inside, "ok").expect("inside file");
+        fs::write(&outside, "bad").expect("outside file");
+
+        assert!(resolve_path_within(&base_dir, inside.to_string_lossy().as_ref()).is_ok());
+        assert!(resolve_path_within(&base_dir, outside.to_string_lossy().as_ref()).is_err());
+    }
+}
