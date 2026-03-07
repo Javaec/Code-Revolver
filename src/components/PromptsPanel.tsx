@@ -1,22 +1,8 @@
-import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { PromptInfo } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Button, Card, Input } from './ui';
-import { confirmAction, showError } from '../lib/dialogs';
-
-// Strip YAML frontmatter, keep only the body
-function stripFrontmatter(content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith('---')) return content;
-  
-  const endIndex = trimmed.indexOf('\n---', 3);
-  if (endIndex === -1) return content;
-  
-  return trimmed.slice(endIndex + 4).trim();
-}
+import { Button, Card } from './ui';
+import { PromptCreateDialog } from './prompts/PromptCreateDialog';
+import { MarkdownDocumentView } from './content/MarkdownDocumentView';
+import { usePromptsManager } from '../hooks/usePromptsManager';
 
 interface PromptsPanelProps {
   onBack: () => void;
@@ -29,87 +15,31 @@ const listItemVariants = {
 };
 
 export function PromptsPanel({ onBack }: PromptsPanelProps) {
-  const [prompts, setPrompts] = useState<PromptInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedPrompt, setSelectedPrompt] = useState<PromptInfo | null>(null);
-  const [editContent, setEditContent] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newDescription, setNewDescription] = useState('');
-  const [newContent, setNewContent] = useState('');
-
-  const loadPrompts = async () => {
-    setLoading(true);
-    try {
-      const result = await invoke<PromptInfo[]>('scan_prompts');
-      setPrompts(result);
-    } catch (error) {
-      console.error('Failed to load prompts:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadPrompts();
-  }, []);
-
-  const handleSelect = (prompt: PromptInfo) => {
-    setSelectedPrompt(prompt);
-    setEditContent(prompt.content);
-    setIsEditing(false);
-  };
-
-  const handleSave = async () => {
-    if (!selectedPrompt) return;
-    try {
-      await invoke('save_prompt_content', {
-        filePath: selectedPrompt.filePath,
-        content: editContent,
-      });
-      await loadPrompts();
-      setIsEditing(false);
-    } catch (error) {
-      console.error('Save failed:', error);
-    }
-  };
-
-  const handleDelete = async (prompt: PromptInfo) => {
-    if (!await confirmAction(`Delete prompt "${prompt.name}"?`, 'Delete Prompt')) return;
-    try {
-      await invoke('delete_prompt', { filePath: prompt.filePath });
-      if (selectedPrompt?.filePath === prompt.filePath) {
-        setSelectedPrompt(null);
-      }
-      await loadPrompts();
-    } catch (error) {
-      console.error('Delete failed:', error);
-    }
-  };
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    try {
-      await invoke('create_prompt', {
-        name: newName.trim(),
-        description: newDescription.trim(),
-        content: newContent.trim() || '# ' + newName.trim(),
-      });
-      setIsCreating(false);
-      setNewName('');
-      setNewDescription('');
-      setNewContent('');
-      await loadPrompts();
-    } catch (error) {
-      console.error('Create failed:', error);
-      await showError(error, 'Create Prompt');
-    }
-  };
+  const {
+    prompts,
+    loading,
+    selectedPrompt,
+    editContent,
+    isEditing,
+    isCreating,
+    newName,
+    newDescription,
+    newContent,
+    setEditContent,
+    setIsEditing,
+    setIsCreating,
+    setNewName,
+    setNewDescription,
+    setNewContent,
+    handleSelect,
+    handleSave,
+    handleDelete,
+    handleCreate,
+    closeCreateDialog,
+  } = usePromptsManager();
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <Button variant="ghost" size="sm" onClick={onBack}>
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -123,9 +53,7 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
         </Button>
       </div>
 
-      {/* Main Content Area */}
       <Card className="flex-1 overflow-hidden flex min-h-0 p-0">
-        {/* Left List */}
         <div className="w-64 flex-shrink-0 border-r border-white/10 flex flex-col">
           <div className="p-3 border-b border-white/10">
             <span className="text-xs text-slate-400 uppercase tracking-wider">List</span>
@@ -164,7 +92,7 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
                       <Button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDelete(prompt);
+                          void handleDelete(prompt);
                         }}
                         variant="ghost"
                         size="icon"
@@ -182,11 +110,9 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
           </div>
         </div>
 
-        {/* Right Content Area */}
         <div className="flex-1 flex flex-col min-w-0">
           {selectedPrompt ? (
             <>
-              {/* Content Header */}
               <div className="flex items-center justify-between p-3 border-b border-white/10">
                 <h3 className="font-medium text-white truncate">{selectedPrompt.name}</h3>
                 <div className="flex gap-2 flex-shrink-0">
@@ -202,7 +128,7 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
                       >
                         Cancel
                       </Button>
-                      <Button variant="default" size="sm" onClick={handleSave}>
+                      <Button variant="default" size="sm" onClick={() => void handleSave()}>
                         Save
                       </Button>
                     </>
@@ -213,7 +139,7 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
                   )}
                 </div>
               </div>
-              {/* Content Body */}
+
               {isEditing ? (
                 <textarea
                   value={editContent}
@@ -221,18 +147,12 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
                   className="flex-1 w-full bg-transparent p-4 text-sm font-mono text-slate-300 resize-none focus:outline-none custom-scrollbar"
                 />
               ) : (
-                <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar p-4 prose prose-invert prose-sm max-w-none prose-headings:text-slate-200 prose-headings:font-semibold prose-p:text-slate-400 prose-p:leading-relaxed prose-li:text-slate-400 prose-strong:text-slate-200 prose-code:text-slate-300 prose-code:bg-slate-700/50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-normal prose-pre:bg-slate-900/50 prose-pre:border prose-pre:border-slate-700/50 prose-pre:text-slate-400 prose-a:text-primary-400 prose-blockquote:border-slate-600 prose-blockquote:text-slate-500 prose-hr:border-slate-700">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripFrontmatter(editContent)}</ReactMarkdown>
-                </div>
+                <MarkdownDocumentView content={editContent} stripFrontmatter />
               )}
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-slate-600">
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-center"
-              >
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="text-center">
                 <svg className="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
@@ -243,71 +163,17 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
         </div>
       </Card>
 
-      {/* Create Dialog */}
-      <AnimatePresence>
-        {isCreating && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <motion.div
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              onClick={() => setIsCreating(false)}
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="relative w-full max-w-md mx-4"
-            >
-              <Card className="p-6 border-white/20 bg-white/15 backdrop-blur-[20px]">
-              <h3 className="text-lg font-bold text-gradient mb-4">New Prompt</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Name</label>
-                  <Input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="Example: plan"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Description</label>
-                  <Input
-                    type="text"
-                    value={newDescription}
-                    onChange={(e) => setNewDescription(e.target.value)}
-                    placeholder="Briefly describe what this prompt does"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Content (Optional)</label>
-                  <textarea
-                    value={newContent}
-                    onChange={(e) => setNewContent(e.target.value)}
-                    placeholder="Prompt content..."
-                    rows={4}
-                    className="w-full resize-none rounded-md border border-white/15 bg-slate-950/60 p-3 text-sm text-white placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60"
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end gap-3 mt-6">
-                <Button variant="ghost" onClick={() => setIsCreating(false)}>
-                  Cancel
-                </Button>
-                <Button variant="default" onClick={handleCreate}>
-                  Create
-                </Button>
-              </div>
-              </Card>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <PromptCreateDialog
+        isOpen={isCreating}
+        name={newName}
+        description={newDescription}
+        content={newContent}
+        onNameChange={setNewName}
+        onDescriptionChange={setNewDescription}
+        onContentChange={setNewContent}
+        onCreate={() => void handleCreate()}
+        onClose={closeCreateDialog}
+      />
     </div>
   );
 }
