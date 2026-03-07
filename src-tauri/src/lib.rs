@@ -210,6 +210,7 @@ pub fn run() {
             get_accounts_dir_path,
             open_accounts_dir,
             fetch_usage,
+            fetch_active_usage,
             rename_account,
             get_app_config,
             set_debug_logging,

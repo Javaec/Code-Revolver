@@ -132,6 +132,10 @@ export function useAccounts() {
         return await commands.fetchUsage(filePath);
     }, []);
 
+    const fetchActiveUsage = useCallback(async (): Promise<UsageInfo> => {
+        return await commands.fetchActiveUsage();
+    }, []);
+
     const applyUsageSnapshot = useCallback((
         filePath: string,
         update: {
@@ -163,7 +167,7 @@ export function useAccounts() {
         ))));
     }, []);
 
-    const refreshAccountUsage = useCallback(async (
+    const refreshActiveAccountUsage = useCallback(async (
         filePath: string,
         options?: { markLoading?: boolean; persistCache?: boolean },
     ): Promise<boolean> => {
@@ -172,7 +176,7 @@ export function useAccounts() {
         }
 
         try {
-            const usage = await fetchUsage(filePath);
+            const usage = await fetchActiveUsage();
             const cachedAt = Date.now();
             applyUsageSnapshot(filePath, {
                 usage,
@@ -198,7 +202,7 @@ export function useAccounts() {
                 setUsageLoadingByPath((prev) => ({ ...prev, [filePath]: false }));
             }
         }
-    }, [applyUsageSnapshot, fetchUsage]);
+    }, [applyUsageSnapshot, fetchActiveUsage]);
 
     const withAccountMutationLock = useCallback(async <T,>(
         filePath: string,
@@ -459,8 +463,8 @@ export function useAccounts() {
         if (!activeAccountFilePath || loading) {
             return;
         }
-        void refreshAccountUsage(activeAccountFilePath, { markLoading: true, persistCache: true });
-    }, [activeAccountFilePath, loading, refreshAccountUsage]);
+        void refreshActiveAccountUsage(activeAccountFilePath, { markLoading: true, persistCache: true });
+    }, [activeAccountFilePath, loading, refreshActiveAccountUsage]);
 
     useAdaptivePoll({
         enabled: Boolean(activeAccountFilePath) && !loading && !activeAccountMutation,
@@ -470,7 +474,7 @@ export function useAccounts() {
             if (!activeAccountFilePath) {
                 return false;
             }
-            return await refreshAccountUsage(activeAccountFilePath, {
+            return await refreshActiveAccountUsage(activeAccountFilePath, {
                 markLoading: true,
                 persistCache: true,
             });
@@ -488,6 +492,7 @@ export function useAccounts() {
         // Find the account ID first to ensure we update the right one reliably
         const targetAccount = accounts.find(a => a.filePath === oldPath);
         const targetId = targetAccount?.id;
+        const previousAccounts = accounts;
 
         try {
             await withAccountMutationLock(oldPath, 'rename', async () => {
@@ -507,6 +512,7 @@ export function useAccounts() {
             });
             return { success: true };
         } catch (error: unknown) {
+            setAccounts(previousAccounts);
             await refresh(); // Force sync
             const message = toErrorMessage(error);
             setLastFailedMutation({ kind: 'rename', filePath: oldPath, newName, message });
@@ -540,19 +546,22 @@ export function useAccounts() {
     }, [notifyInfo, refresh]);
 
     const deleteAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
+        const previousAccounts = accounts;
         try {
             await withAccountMutationLock(filePath, 'delete', async () => {
+                setAccounts((prevAccounts) => prevAccounts.filter((account) => account.filePath !== filePath));
                 await commands.deleteAccount(filePath);
                 await new Promise(resolve => setTimeout(resolve, 500));
                 await refresh();
             });
             return { success: true };
         } catch (error: unknown) {
+            setAccounts(previousAccounts);
             const message = toErrorMessage(error);
             setLastFailedMutation({ kind: 'delete', filePath, message });
             return { success: false, message };
         }
-    }, [refresh, withAccountMutationLock]);
+    }, [accounts, refresh, withAccountMutationLock]);
 
     const refreshAccountToken = useCallback(async (filePath: string): Promise<MutationResult> => {
         try {

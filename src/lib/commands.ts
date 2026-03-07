@@ -40,6 +40,7 @@ export const commands = {
   openCodexDir: () => invokeCommand<string>('open_codex_dir'),
   scanAccounts: () => invokeCommand<ScanResult>('scan_accounts'),
   fetchUsage: async (filePath: string) => normalizeUsageInfo(await invokeCommand<UsageInfo>('fetch_usage', { filePath })),
+  fetchActiveUsage: async () => normalizeUsageInfo(await invokeCommand<UsageInfo>('fetch_active_usage')),
   switchAccount: (filePath: string) => invokeCommand<void>('switch_account', { filePath }),
   renameAccount: (oldPath: string, newName: string) => invokeCommand<void>('rename_account', { oldPath, newName }),
   getAccountsDirPath: () => invokeCommand<string>('get_accounts_dir_path'),

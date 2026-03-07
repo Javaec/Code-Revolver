@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WebDavConfig, SyncSettings, SyncResult, SyncPreview, DEFAULT_SYNC_SETTINGS } from '../types';
 import { Button, Card } from './ui';
@@ -40,7 +40,7 @@ export function SyncConfirmDialog({
   const [preview, setPreview] = useState<SyncPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [syncHistory, setSyncHistory] = useState<SyncHistoryEntry[]>(() => loadSyncHistory());
-  const { notifyError } = useNotifications();
+  const { notifyError, notifyInfo } = useNotifications();
 
   const sync = syncSettings || DEFAULT_SYNC_SETTINGS;
 
@@ -161,6 +161,44 @@ export function SyncConfirmDialog({
   const hasItems = syncItems.length > 0;
   const isSuccess = syncResult && syncResult.errors.length === 0;
   const conflictCount = preview?.conflictCount ?? 0;
+  const groupedPreviewItems = useMemo(() => {
+    if (!preview) return [];
+
+    const groups = [
+      { key: 'account', label: 'Accounts' },
+      { key: 'prompt', label: 'Prompts' },
+      { key: 'skill', label: 'Skills' },
+      { key: 'agents', label: 'AGENTS.MD' },
+      { key: 'config', label: 'config.toml' },
+    ] as const;
+
+    return groups
+      .map((group) => ({
+        label: group.label,
+        items: preview.items.filter((item) => item.type === group.key),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [preview]);
+
+  const handleCopyDryRun = async () => {
+    if (!preview) return;
+
+    const lines = [
+      `Cloud Sync Dry Run`,
+      `Upload: ${preview.uploadCount}`,
+      `Download: ${preview.downloadCount}`,
+      `Conflict: ${preview.conflictCount}`,
+      '',
+      ...groupedPreviewItems.flatMap((group) => [
+        `[${group.label}]`,
+        ...group.items.map((item) => `- ${item.action.toUpperCase()} ${item.name}`),
+        '',
+      ]),
+    ];
+
+    await navigator.clipboard.writeText(lines.join('\n').trim());
+    notifyInfo('Dry-run preview copied to clipboard', 'Sync Preview');
+  };
 
   return (
     <AnimatePresence>
@@ -266,11 +304,18 @@ export function SyncConfirmDialog({
                   <div className="rounded-lg border border-white/10 bg-white/5 p-3 mb-4">
                     <div className="flex items-center justify-between gap-3 mb-2">
                       <div className="text-xs text-slate-400">Preview before overwrite</div>
-                      {preview && (
-                        <div className="text-[11px] text-slate-400">
-                          {preview.uploadCount} upload • {preview.downloadCount} download • {preview.conflictCount} conflict
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {preview && (
+                          <div className="text-[11px] text-slate-400">
+                            {preview.uploadCount} upload • {preview.downloadCount} download • {preview.conflictCount} conflict
+                          </div>
+                        )}
+                        {preview && (
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" onClick={() => void handleCopyDryRun()}>
+                            Copy Dry Run
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-1.5 mb-3">
                       {syncItems.map((item, i) => (
@@ -282,26 +327,31 @@ export function SyncConfirmDialog({
                     {previewLoading ? (
                       <div className="text-xs text-slate-500">Building sync preview...</div>
                     ) : preview ? (
-                      <div className="max-h-40 overflow-y-auto custom-scrollbar rounded-lg border border-white/10 bg-black/10 p-2 text-xs">
+                      <div className="max-h-48 overflow-y-auto custom-scrollbar rounded-lg border border-white/10 bg-black/10 p-2 text-xs">
                         {preview.items.length === 0 ? (
                           <div className="text-slate-500">No remote or local files found for the selected scopes.</div>
                         ) : (
-                          preview.items.map((item) => (
-                            <div key={`${item.type}:${item.name}`} className="flex items-center justify-between gap-2 py-1">
-                              <div className="min-w-0 truncate text-slate-200">{item.name}</div>
-                              <span
-                                className={`shrink-0 rounded-md border px-2 py-0.5 uppercase tracking-wide ${
-                                  item.action === 'conflict'
-                                    ? 'border-amber-500/30 bg-amber-500/15 text-amber-300'
-                                    : item.action === 'upload'
-                                      ? 'border-cyan-500/30 bg-cyan-500/15 text-cyan-300'
-                                      : item.action === 'download'
-                                        ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300'
-                                        : 'border-white/10 bg-white/5 text-slate-400'
-                                }`}
-                              >
-                                {item.action}
-                              </span>
+                          groupedPreviewItems.map((group) => (
+                            <div key={group.label} className="mb-3 last:mb-0">
+                              <div className="mb-1 text-[11px] uppercase tracking-[0.14em] text-slate-500">{group.label}</div>
+                              {group.items.map((item) => (
+                                <div key={`${item.type}:${item.name}`} className="flex items-center justify-between gap-2 py-1">
+                                  <div className="min-w-0 truncate text-slate-200">{item.name}</div>
+                                  <span
+                                    className={`shrink-0 rounded-md border px-2 py-0.5 uppercase tracking-wide ${
+                                      item.action === 'conflict'
+                                        ? 'border-amber-500/30 bg-amber-500/15 text-amber-300'
+                                        : item.action === 'upload'
+                                          ? 'border-cyan-500/30 bg-cyan-500/15 text-cyan-300'
+                                          : item.action === 'download'
+                                            ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300'
+                                            : 'border-white/10 bg-white/5 text-slate-400'
+                                    }`}
+                                  >
+                                    {item.action}
+                                  </span>
+                                </div>
+                              ))}
                             </div>
                           ))
                         )}

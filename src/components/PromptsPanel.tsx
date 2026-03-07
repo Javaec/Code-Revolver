@@ -1,5 +1,6 @@
+import { useDeferredValue, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Button } from './ui';
+import { Button, Input } from './ui';
 import { PromptCreateDialog } from './prompts/PromptCreateDialog';
 import { MarkdownDocumentView } from './content/MarkdownDocumentView';
 import { usePromptsManager } from '../hooks/usePromptsManager';
@@ -17,6 +18,8 @@ const listItemVariants = {
 };
 
 export function PromptsPanel({ onBack }: PromptsPanelProps) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const {
     prompts,
     loading,
@@ -43,8 +46,18 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
     isDirty,
   } = usePromptsManager();
 
+  const visiblePrompts = useMemo(() => {
+    const query = deferredSearchQuery.trim().toLowerCase();
+    if (!query) return prompts;
+    return prompts.filter((prompt) => (
+      prompt.name.toLowerCase().includes(query)
+      || prompt.description.toLowerCase().includes(query)
+      || prompt.content.toLowerCase().includes(query)
+    ));
+  }, [deferredSearchQuery, prompts]);
+
   const { handleKeyDown, setFocusedIndex } = useListKeyboardNavigation({
-    items: prompts,
+    items: visiblePrompts,
     selectedKey: selectedPrompt?.filePath ?? null,
     getKey: (prompt) => prompt.filePath,
     onSelect: handleSelect,
@@ -77,9 +90,15 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
           <>
             <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Prompts</div>
             <div className="mt-1 text-xs text-slate-400">
-              {selectedPrompt ? `Selected: ${selectedPrompt.name}` : `${prompts.length} prompt files`}
+              {selectedPrompt ? `Selected: ${selectedPrompt.name}` : `${visiblePrompts.length} prompt files`}
             </div>
             <div className="mt-2 text-[11px] text-slate-500">Use arrow keys to move, Enter to open, Delete to remove.</div>
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search prompts..."
+              className="mt-3 h-8 text-xs"
+            />
           </>
         }
         listBody={
@@ -92,11 +111,11 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
           >
             {loading ? (
               <div className="text-center py-8 text-slate-500 text-sm">Loading...</div>
-            ) : prompts.length === 0 ? (
-              <div className="text-center py-8 text-slate-500 text-sm">No Prompts</div>
+            ) : visiblePrompts.length === 0 ? (
+              <div className="text-center py-8 text-slate-500 text-sm">No matching prompts</div>
             ) : (
               <AnimatePresence>
-                {prompts.map((prompt, index) => (
+                {visiblePrompts.map((prompt, index) => (
                   <motion.div
                     key={prompt.filePath}
                     variants={listItemVariants}

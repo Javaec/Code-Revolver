@@ -1,5 +1,6 @@
+import { useDeferredValue, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Button } from './ui';
+import { Button, Input } from './ui';
 import { SkillCreateDialog } from './skills/SkillCreateDialog';
 import { MarkdownDocumentView } from './content/MarkdownDocumentView';
 import { useSkillsManager } from '../hooks/useSkillsManager';
@@ -17,6 +18,8 @@ const listItemVariants = {
 };
 
 export function SkillsPanel({ onBack }: SkillsPanelProps) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const {
     skills,
     loading,
@@ -41,8 +44,18 @@ export function SkillsPanel({ onBack }: SkillsPanelProps) {
     isDirty,
   } = useSkillsManager();
 
+  const visibleSkills = useMemo(() => {
+    const query = deferredSearchQuery.trim().toLowerCase();
+    if (!query) return skills;
+    return skills.filter((skill) => (
+      skill.name.toLowerCase().includes(query)
+      || skill.description.toLowerCase().includes(query)
+      || skill.dirPath.toLowerCase().includes(query)
+    ));
+  }, [deferredSearchQuery, skills]);
+
   const { handleKeyDown, setFocusedIndex } = useListKeyboardNavigation({
-    items: skills,
+    items: visibleSkills,
     selectedKey: selectedSkill?.dirPath ?? null,
     getKey: (skill) => skill.dirPath,
     onSelect: handleSelect,
@@ -75,9 +88,15 @@ export function SkillsPanel({ onBack }: SkillsPanelProps) {
           <>
             <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Skills</div>
             <div className="mt-1 text-xs text-slate-400">
-              {selectedSkill ? `Selected: ${selectedSkill.name}` : `${skills.length} skill folders`}
+              {selectedSkill ? `Selected: ${selectedSkill.name}` : `${visibleSkills.length} skill folders`}
             </div>
             <div className="mt-2 text-[11px] text-slate-500">Use arrow keys to move, Enter to open, Delete to remove.</div>
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search skills..."
+              className="mt-3 h-8 text-xs"
+            />
           </>
         }
         listBody={
@@ -90,11 +109,11 @@ export function SkillsPanel({ onBack }: SkillsPanelProps) {
           >
             {loading ? (
               <div className="text-center py-8 text-slate-500 text-sm">Loading...</div>
-            ) : skills.length === 0 ? (
-              <div className="text-center py-8 text-slate-500 text-sm">No Skills</div>
+            ) : visibleSkills.length === 0 ? (
+              <div className="text-center py-8 text-slate-500 text-sm">No matching skills</div>
             ) : (
               <AnimatePresence>
-                {skills.map((skill, index) => (
+                {visibleSkills.map((skill, index) => (
                   <motion.div
                     key={skill.dirPath}
                     variants={listItemVariants}

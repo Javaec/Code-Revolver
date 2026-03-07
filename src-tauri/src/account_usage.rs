@@ -1,7 +1,8 @@
 use crate::account_files::resolve_managed_account_path;
-use crate::{get_accounts_dir, CodexAuthFile};
+use crate::{get_accounts_dir, get_codex_auth_file, CodexAuthFile};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitWindow {
@@ -42,10 +43,8 @@ struct ApiUsageResponse {
     plan_type: Option<String>,
 }
 
-#[tauri::command]
-pub async fn fetch_usage(file_path: String) -> Result<UsageInfo, String> {
-    let validated_path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
-    let content = fs::read_to_string(&validated_path)
+pub(crate) async fn fetch_usage_from_auth_path(auth_path: &Path) -> Result<UsageInfo, String> {
+    let content = fs::read_to_string(auth_path)
         .map_err(|e| format!("Failed to read authentication file: {}", e))?;
 
     let auth: CodexAuthFile = serde_json::from_str(&content)
@@ -128,4 +127,20 @@ pub async fn fetch_usage(file_path: String) -> Result<UsageInfo, String> {
         secondary_window: secondary,
         plan_type: api_response.plan_type,
     })
+}
+
+#[tauri::command]
+pub async fn fetch_usage(file_path: String) -> Result<UsageInfo, String> {
+    let validated_path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
+    fetch_usage_from_auth_path(&validated_path).await
+}
+
+#[tauri::command]
+pub async fn fetch_active_usage() -> Result<UsageInfo, String> {
+    let active_auth_path = get_codex_auth_file();
+    if !active_auth_path.exists() {
+        return Err("Active authentication file does not exist".to_string());
+    }
+
+    fetch_usage_from_auth_path(&active_auth_path).await
 }

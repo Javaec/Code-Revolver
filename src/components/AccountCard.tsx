@@ -256,6 +256,12 @@ export function AccountCard({
             Expired
           </motion.span>
         )}
+
+        {activeMutationKind && (
+          <span className="rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-slate-200">
+            {activeMutationKind}
+          </span>
+        )}
       </div>
 
       {/* Content: Left Info | Center Timing | Right Controls */}

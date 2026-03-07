@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useDeferredValue, useMemo, useState } from 'react';
 import { Header } from './components/Header';
 import { NavigationBar, ViewType } from './components/NavigationBar';
 import { AccountCard } from './components/AccountCard';
@@ -12,7 +12,7 @@ import { useAccounts } from './hooks/useAccounts';
 import { useIntervalTask } from './hooks/useIntervalTask';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AccountInfo, AccountPoolMetadata, DEFAULT_SYNC_SETTINGS, GatewaySettings } from './types';
-import { Card, Button } from './components/ui';
+import { Card, Button, Input } from './components/ui';
 import { commands } from './lib/commands';
 import { preloadPanel, panelImporters } from './lib/panelImports';
 import { useNotifications } from './lib/notificationState';
@@ -84,6 +84,9 @@ function App() {
   const [editingAccount, setEditingAccount] = useState<AccountInfo | null>(null);
   const [poolEditingAccount, setPoolEditingAccount] = useState<AccountInfo | null>(null);
   const [clockTickMs, setClockTickMs] = useState(() => Date.now());
+  const [accountSearchQuery, setAccountSearchQuery] = useState('');
+  const [accountSortMode, setAccountSortMode] = useState<'smart' | 'name' | 'recent' | 'priority'>('smart');
+  const deferredAccountSearchQuery = useDeferredValue(accountSearchQuery);
 
   useIntervalTask(true, 60_000, () => {
     setClockTickMs(Date.now());
@@ -123,6 +126,27 @@ function App() {
   const handleSavePoolMetadata = (accountId: string, metadata: AccountPoolMetadata) => {
     updateAccountPoolMetadata(accountId, metadata);
   };
+
+  const visibleAccounts = useMemo(() => {
+    const query = deferredAccountSearchQuery.trim().toLowerCase();
+    const filtered = query.length === 0
+      ? accounts
+      : accounts.filter((account) => (
+        account.name.toLowerCase().includes(query)
+        || account.email.toLowerCase().includes(query)
+        || account.planType.toLowerCase().includes(query)
+      ));
+
+    const next = [...filtered];
+    if (accountSortMode === 'name') {
+      next.sort((left, right) => left.name.localeCompare(right.name, 'en-US'));
+    } else if (accountSortMode === 'recent') {
+      next.sort((left, right) => right.authUpdatedAt - left.authUpdatedAt);
+    } else if (accountSortMode === 'priority') {
+      next.sort((left, right) => (right.pool?.priority ?? 5) - (left.pool?.priority ?? 5));
+    }
+    return next;
+  }, [accountSortMode, accounts, deferredAccountSearchQuery]);
 
   return (
     <div className="min-h-screen text-slate-200 p-4 sm:p-6 font-sans selection:bg-primary-500/30">
@@ -207,6 +231,35 @@ function App() {
                   />
                 </div>
 
+                <Card className="sticky top-4 z-10 mb-4 border-white/10 bg-slate-950/70 p-3 backdrop-blur-xl">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Account Toolbar</div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        Showing {visibleAccounts.length} of {accounts.length} accounts
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Input
+                        value={accountSearchQuery}
+                        onChange={(event) => setAccountSearchQuery(event.target.value)}
+                        placeholder="Search accounts by name, email, or plan..."
+                        className="h-9 w-full text-sm sm:w-72"
+                      />
+                      <select
+                        value={accountSortMode}
+                        onChange={(event) => setAccountSortMode(event.target.value as 'smart' | 'name' | 'recent' | 'priority')}
+                        className="h-9 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-slate-200 outline-none focus:border-primary-400/40"
+                      >
+                        <option value="smart">Smart Order</option>
+                        <option value="name">Name</option>
+                        <option value="recent">Recently Updated</option>
+                        <option value="priority">Pool Priority</option>
+                      </select>
+                    </div>
+                  </div>
+                </Card>
+
                 {accounts.length === 0 && !loading ? (
                   <motion.div
                     variants={emptyStateVariants}
@@ -250,7 +303,7 @@ function App() {
                 ) : (
                   <div className="space-y-2">
                     <AnimatePresence initial={false}>
-                      {accounts.map((account, index) => (
+                      {visibleAccounts.map((account, index) => (
                         <motion.div
                           key={account.filePath}
                           layout
