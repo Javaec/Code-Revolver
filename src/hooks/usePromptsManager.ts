@@ -16,6 +16,7 @@ export function usePromptsManager() {
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newContent, setNewContent] = useState('');
+  const isDirty = isEditing && selectedPrompt !== null && editContent !== selectedPrompt.content;
 
   const loadPrompts = useCallback(async () => {
     setLoading(true);
@@ -35,13 +36,26 @@ export function usePromptsManager() {
     void loadPrompts();
   }, [loadPrompts]);
 
-  const handleSelect = useCallback((prompt: PromptInfo) => {
+  const confirmDiscardChanges = useCallback(async () => {
+    if (!isDirty) {
+      return true;
+    }
+    return await confirmAction('Discard unsaved prompt changes?', 'Unsaved Changes');
+  }, [isDirty]);
+
+  const handleSelect = useCallback(async (prompt: PromptInfo) => {
+    if (selectedPrompt?.filePath === prompt.filePath) {
+      return;
+    }
+    if (!await confirmDiscardChanges()) {
+      return;
+    }
     startTransition(() => {
       setSelectedPrompt(prompt);
       setEditContent(prompt.content);
       setIsEditing(false);
     });
-  }, []);
+  }, [confirmDiscardChanges, selectedPrompt?.filePath]);
 
   const handleSave = useCallback(async () => {
     if (!selectedPrompt) return;
@@ -76,6 +90,30 @@ export function usePromptsManager() {
     setNewContent('');
   }, []);
 
+  const closeCreateDialogWithConfirm = useCallback(async () => {
+    if (!newName.trim() && !newDescription.trim() && !newContent.trim()) {
+      closeCreateDialog();
+      return;
+    }
+    if (await confirmAction('Discard new prompt draft?', 'Discard Draft')) {
+      closeCreateDialog();
+    }
+  }, [closeCreateDialog, newContent, newDescription, newName]);
+
+  const startEditing = useCallback(() => {
+    setIsEditing(true);
+  }, []);
+
+  const cancelEditing = useCallback(async () => {
+    if (!await confirmDiscardChanges()) {
+      return;
+    }
+    if (selectedPrompt) {
+      setEditContent(selectedPrompt.content);
+    }
+    setIsEditing(false);
+  }, [confirmDiscardChanges, selectedPrompt]);
+
   const handleCreate = useCallback(async () => {
     if (!newName.trim()) return;
     try {
@@ -98,12 +136,13 @@ export function usePromptsManager() {
     selectedPrompt,
     editContent,
     isEditing,
+    isDirty,
     isCreating,
     newName,
     newDescription,
     newContent,
     setEditContent,
-    setIsEditing,
+    setIsEditing: startEditing,
     setIsCreating,
     setNewName,
     setNewDescription,
@@ -112,6 +151,8 @@ export function usePromptsManager() {
     handleSave,
     handleDelete,
     handleCreate,
-    closeCreateDialog,
+    closeCreateDialog: closeCreateDialogWithConfirm,
+    cancelEditing,
+    confirmDiscardChanges,
   };
 }

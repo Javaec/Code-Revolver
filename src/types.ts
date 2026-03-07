@@ -46,6 +46,10 @@ export interface GatewaySettings {
     oauthCallbackUrl: string;
     keepAliveIntervalSec: number;
     lastKeepAliveAt?: number;
+    lastHealthCheckAt?: number;
+    lastHealthLatencyMs?: number;
+    lastStatusCode?: number;
+    lastHealthError?: string;
     status: 'idle' | 'online' | 'offline';
 }
 
@@ -109,6 +113,7 @@ export const DEFAULT_GATEWAY_SETTINGS: GatewaySettings = {
     manualOAuthCallback: true,
     oauthCallbackUrl: 'http://127.0.0.1:8787/oauth/callback',
     keepAliveIntervalSec: 45,
+    lastHealthError: '',
     status: 'idle',
 };
 

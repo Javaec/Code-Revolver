@@ -3,6 +3,8 @@ import { GatewaySettings } from '../types';
 import { useNotifications } from '../lib/notificationState';
 import { resolveGatewayPlatformKey, validateGatewaySettings } from '../lib/gateway';
 import { toErrorMessage } from '../lib/errors';
+import { probeGateway } from '../lib/gatewayHealth';
+import { useAdaptivePoll } from './useAdaptivePoll';
 
 interface UseGatewayServiceOptions {
   gateway: GatewaySettings;
@@ -13,6 +15,7 @@ export function useGatewayService({ gateway, onUpdateGateway }: UseGatewayServic
   const [showKey, setShowKey] = useState(false);
   const [platformKeyInput, setPlatformKeyInput] = useState('');
   const [loadingPlatformKey, setLoadingPlatformKey] = useState(false);
+  const [healthChecking, setHealthChecking] = useState(false);
   const { notifyError, notifyInfo } = useNotifications();
 
   useEffect(() => {
@@ -59,28 +62,57 @@ export function useGatewayService({ gateway, onUpdateGateway }: UseGatewayServic
     });
   }, [gateway.hasStoredPlatformKey, onUpdateGateway]);
 
-  const pingGateway = useCallback(() => {
+  const refreshGatewayHealth = useCallback(async (options?: { silent?: boolean }) => {
     const validationError = validateGatewaySettings(gateway);
     if (validationError) {
-      notifyError(validationError, 'Gateway');
-      return;
+      onUpdateGateway({
+        status: 'offline',
+        lastHealthError: validationError,
+      });
+      if (!options?.silent) {
+        notifyError(validationError, 'Gateway');
+      }
+      return false;
     }
 
+    setHealthChecking(true);
+    const result = await probeGateway(gateway.endpoint);
     onUpdateGateway({
-      status: 'online',
-      lastKeepAliveAt: Date.now(),
+      status: result.ok ? 'online' : 'offline',
+      lastKeepAliveAt: result.ok ? Date.now() : gateway.lastKeepAliveAt,
+      lastHealthCheckAt: Date.now(),
+      lastHealthLatencyMs: result.latencyMs,
+      lastStatusCode: result.statusCode,
+      lastHealthError: result.ok ? '' : result.error ?? 'Gateway probe failed',
     });
-    notifyInfo('Gateway keepalive ping recorded', 'Gateway');
+
+    if (!options?.silent) {
+      if (result.ok) {
+        notifyInfo(`Gateway responded in ${result.latencyMs} ms`, 'Gateway');
+      } else {
+        notifyError(result.error ?? 'Gateway probe failed', 'Gateway');
+      }
+    }
+    setHealthChecking(false);
+    return result.ok;
   }, [gateway, notifyError, notifyInfo, onUpdateGateway]);
+
+  useAdaptivePoll({
+    enabled: gateway.enabled,
+    baseDelayMs: Math.max(15, gateway.keepAliveIntervalSec) * 1000,
+    maxDelayMs: Math.max(60, gateway.keepAliveIntervalSec * 4) * 1000,
+    task: async () => await refreshGatewayHealth({ silent: true }),
+  });
 
   return {
     showKey,
     platformKeyInput,
     loadingPlatformKey,
+    healthChecking,
     statusLabel,
     setShowKey: toggleKeyVisibility,
     setPlatformKeyInput: updatePlatformKey,
     loadPlatformKey,
-    pingGateway,
+    pingGateway: refreshGatewayHealth,
   };
 }

@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { useTextDocumentEditor } from './useTextDocumentEditor';
 import { NotificationsProvider } from '../lib/notifications';
 
+vi.mock('../lib/dialogs', () => ({
+  confirmAction: vi.fn().mockResolvedValue(true),
+}));
+
 function wrapper({ children }: { children: React.ReactNode }) {
   return <NotificationsProvider>{children}</NotificationsProvider>;
 }
@@ -42,7 +46,7 @@ describe('useTextDocumentEditor', () => {
     });
 
     act(() => {
-      result.current.setIsEditing(true);
+      result.current.setIsEditing();
       result.current.setEditContent('updated');
     });
 
@@ -53,5 +57,33 @@ describe('useTextDocumentEditor', () => {
     expect(save).toHaveBeenCalledWith('updated');
     expect(result.current.content).toBe('updated');
     expect(result.current.isEditing).toBe(false);
+  });
+
+  it('tracks dirty state and supports undo snapshots', async () => {
+    const load = vi.fn().mockResolvedValue('initial');
+    const save = vi.fn().mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useTextDocumentEditor({
+      load,
+      save,
+      saveTitle: 'TestDoc',
+    }), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    act(() => {
+      result.current.setIsEditing();
+      result.current.setEditContent('updated once');
+    });
+
+    expect(result.current.isDirty).toBe(true);
+
+    act(() => {
+      result.current.undoEdit();
+    });
+
+    expect(result.current.editContent).toBe('initial');
   });
 });

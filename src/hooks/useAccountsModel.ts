@@ -40,6 +40,10 @@ export function normalizeGatewaySettings(gateway?: Partial<GatewaySettings>): Ga
     endpoint: gateway?.endpoint?.trim() || DEFAULT_GATEWAY_SETTINGS.endpoint,
     oauthCallbackUrl: gateway?.oauthCallbackUrl?.trim() || DEFAULT_GATEWAY_SETTINGS.oauthCallbackUrl,
     keepAliveIntervalSec: safeKeepAlive,
+    lastHealthCheckAt: gateway?.lastHealthCheckAt,
+    lastHealthLatencyMs: gateway?.lastHealthLatencyMs,
+    lastStatusCode: gateway?.lastStatusCode,
+    lastHealthError: gateway?.lastHealthError ?? '',
   };
 }
 

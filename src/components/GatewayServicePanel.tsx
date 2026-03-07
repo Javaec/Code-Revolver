@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { GatewaySettings } from '../types';
 import { Badge, Button, Card, Input } from './ui';
-import { useIntervalTask } from '../hooks/useIntervalTask';
 import { useGatewayService } from '../hooks/useGatewayService';
 import { validateGatewaySettings } from '../lib/gateway';
 
@@ -26,19 +25,13 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
     showKey,
     platformKeyInput,
     loadingPlatformKey,
+    healthChecking,
     statusLabel,
     setShowKey,
     setPlatformKeyInput,
     loadPlatformKey,
     pingGateway,
   } = useGatewayService({ gateway, onUpdateGateway });
-
-  useIntervalTask(gateway.enabled, Math.max(15, gateway.keepAliveIntervalSec) * 1000, () => {
-    onUpdateGateway({
-      status: 'online',
-      lastKeepAliveAt: Date.now(),
-    });
-  });
 
   const validationError = useMemo(() => validateGatewaySettings(gateway), [gateway]);
 
@@ -130,17 +123,23 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
       </div>
 
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs text-slate-400">
-          Keepalive: {formatLastPing(gateway.lastKeepAliveAt)}
+        <div className="space-y-1 text-xs text-slate-400">
+          <div>Keepalive: {formatLastPing(gateway.lastKeepAliveAt)}</div>
+          <div>
+            Health: {gateway.lastHealthCheckAt
+              ? `${gateway.lastHealthLatencyMs ?? 0} ms${gateway.lastStatusCode ? ` • HTTP ${gateway.lastStatusCode}` : ''}`
+              : 'No health probe yet'}
+          </div>
         </div>
         <div className="flex gap-2">
           <Button
             variant="outline"
             size="sm"
             className="h-8 px-3 text-xs border-blue-500/25 text-blue-300 hover:bg-blue-500/10"
-            onClick={pingGateway}
+            onClick={() => void pingGateway()}
+            disabled={healthChecking}
           >
-            Ping
+            {healthChecking ? 'Checking...' : 'Ping'}
           </Button>
           <Button
             variant={gateway.enabled ? 'secondary' : 'default'}
@@ -160,6 +159,12 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
       {validationError && (
         <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
           {validationError}
+        </div>
+      )}
+
+      {!validationError && gateway.lastHealthError && (
+        <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+          {gateway.lastHealthError}
         </div>
       )}
     </Card>

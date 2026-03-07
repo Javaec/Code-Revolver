@@ -42,6 +42,15 @@ const AgentsPanel = lazy(async () => ({ default: (await panelImporters.agents())
 const ConfigPanel = lazy(async () => ({ default: (await panelImporters.config()).ConfigPanel }));
 const GatewayPanel = lazy(async () => ({ default: (await panelImporters.gateway()).GatewayPanel }));
 
+const viewLabels: Record<ViewType, string> = {
+  accounts: 'Accounts',
+  prompts: 'Prompts',
+  skills: 'Skills',
+  agents: 'AGENTS.MD',
+  gateway: 'Gateway',
+  config: 'config.toml',
+};
+
 function App() {
   const {
     accounts,
@@ -133,6 +142,32 @@ function App() {
         )}
 
         <main className="space-y-4">
+          <Card className="border-white/10 bg-slate-950/35 p-3 sm:p-4">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                    Workspace Navigator
+                  </div>
+                  <div className="mt-1 text-sm text-slate-300">
+                    Current surface: <span className="font-semibold text-white">{viewLabels[currentView]}</span>
+                  </div>
+                </div>
+                {currentView !== 'accounts' && (
+                  <Button variant="ghost" size="sm" className="h-8 rounded-xl border border-white/10 bg-white/[0.03]" onClick={() => handleNavigate('accounts')}>
+                    Return to Accounts
+                  </Button>
+                )}
+              </div>
+              <NavigationBar
+                currentView={currentView}
+                onNavigate={handleNavigate}
+                onPrefetchView={preloadPanel}
+                onSync={() => setIsSyncOpen(true)}
+              />
+            </div>
+          </Card>
+
           {lastFailedMutation && (
             <Card className="border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -161,17 +196,6 @@ function App() {
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
               >
-                <div className="mb-4">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">
-                    Workspace Tools
-                  </div>
-                  <NavigationBar
-                    onNavigate={handleNavigate}
-                    onPrefetchView={preloadPanel}
-                    onSync={() => setIsSyncOpen(true)}
-                  />
-                </div>
-
                 <div className="mb-4">
                   <AccountPoolPanel
                     accounts={accounts}

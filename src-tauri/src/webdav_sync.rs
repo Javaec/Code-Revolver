@@ -5,6 +5,8 @@ use crate::webdav_propfind::{parse_propfind_resources, WebDavResource};
 use crate::{get_accounts_dir, get_codex_dir, get_prompts_dir, get_skills_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -45,6 +47,15 @@ struct SyncManifest {
     version: u32,
     #[serde(rename = "generatedAt")]
     generated_at: i64,
+    #[serde(default)]
+    entries: HashMap<String, SyncManifestEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct SyncManifestEntry {
+    hash: String,
+    #[serde(rename = "modifiedAt")]
+    modified_at: i64,
 }
 
 impl Default for CodexSyncConfig {
@@ -119,6 +130,20 @@ fn path_modified_at(path: &Path) -> Option<i64> {
     Some(elapsed.as_millis() as i64)
 }
 
+fn hash_content(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn hash_file(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok().map(|content| hash_content(&content))
+}
+
+fn manifest_key(prefix: &str, name: &str) -> String {
+    format!("{}{}", prefix, name).trim_start_matches('/').to_string()
+}
+
 fn collect_local_tree(
     dir: &Path,
     item_type: SyncItemType,
@@ -151,6 +176,7 @@ fn collect_local_tree(
                 name: next_name,
                 item_type: item_type.clone(),
                 modified_at: path_modified_at(&path),
+                hash: hash_file(&path),
             });
         }
     }
@@ -175,6 +201,7 @@ fn collect_accounts_preview_entries() -> Vec<SyncPreviewEntry> {
             name: name.to_string(),
             item_type: SyncItemType::Account,
             modified_at: path_modified_at(&path),
+            hash: hash_file(&path),
         });
     }
 
@@ -192,6 +219,7 @@ fn collect_codex_preview_entries(sync_config: &CodexSyncConfig) -> Vec<SyncPrevi
                 name: "AGENTS.MD".to_string(),
                 item_type: SyncItemType::Agents,
                 modified_at: path_modified_at(&path),
+                hash: hash_file(&path),
             });
         }
     }
@@ -203,6 +231,7 @@ fn collect_codex_preview_entries(sync_config: &CodexSyncConfig) -> Vec<SyncPrevi
                 name: "config.toml".to_string(),
                 item_type: SyncItemType::Config,
                 modified_at: path_modified_at(&path),
+                hash: hash_file(&path),
             });
         }
     }
@@ -353,11 +382,13 @@ async fn list_remote_entries(
     root_config: &WebDavConfig,
     item_type: SyncItemType,
     prefix: &str,
+    manifest_prefix: &str,
+    manifest: &SyncManifest,
 ) -> AppResult<Vec<SyncPreviewEntry>> {
-    let mut stack = vec![(root_config.clone(), prefix.to_string())];
+    let mut stack = vec![(root_config.clone(), prefix.to_string(), manifest_prefix.to_string())];
     let mut entries = Vec::new();
 
-    while let Some((config, current_prefix)) = stack.pop() {
+    while let Some((config, current_prefix, current_manifest_prefix)) = stack.pop() {
         let resources = match propfind(client, &config, 1).await {
             Ok(value) => value,
             Err(error) if is_not_found(&error) => continue,
@@ -373,6 +404,7 @@ async fn list_remote_entries(
                 stack.push((
                     scoped_config(&config, &name),
                     format!("{}/", format!("{}{}", current_prefix, name).trim_end_matches('/')),
+                    format!("{}/", manifest_key(&current_manifest_prefix, &name).trim_end_matches('/')),
                 ));
                 continue;
             }
@@ -381,6 +413,10 @@ async fn list_remote_entries(
                 name: format!("{}{}", current_prefix, name),
                 item_type: item_type.clone(),
                 modified_at: resource.last_modified,
+                hash: manifest
+                    .entries
+                    .get(&manifest_key(&current_manifest_prefix, &name))
+                    .map(|entry| entry.hash.clone()),
             });
         }
     }
@@ -392,20 +428,41 @@ async fn list_remote_root_files(client: &reqwest::Client, config: &WebDavConfig)
     propfind(client, config, 1).await
 }
 
-async fn write_sync_manifest(client: &reqwest::Client, config: &WebDavConfig) -> AppResult<()> {
-    let manifest = SyncManifest {
-        version: SYNC_MANIFEST_VERSION,
-        generated_at: chrono::Utc::now().timestamp_millis(),
-    };
-    let body = serde_json::to_string_pretty(&manifest)
+async fn load_sync_manifest(client: &reqwest::Client, config: &WebDavConfig) -> AppResult<SyncManifest> {
+    match webdav_download(client, config, SYNC_MANIFEST_FILE).await {
+        Ok(content) => serde_json::from_str::<SyncManifest>(&content)
+            .map_err(|e| AppError::parse(format!("Failed to parse sync manifest: {}", e))),
+        Err(error) if is_not_found(&error) => Ok(SyncManifest {
+            version: SYNC_MANIFEST_VERSION,
+            generated_at: chrono::Utc::now().timestamp_millis(),
+            entries: HashMap::new(),
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+async fn write_sync_manifest(
+    client: &reqwest::Client,
+    config: &WebDavConfig,
+    manifest: &SyncManifest,
+) -> AppResult<()> {
+    let body = serde_json::to_string_pretty(manifest)
         .map_err(|e| AppError::parse(format!("Failed to serialize sync manifest: {}", e)))?;
     webdav_upload(client, config, SYNC_MANIFEST_FILE, &body).await
+}
+
+fn upsert_manifest_entry(manifest: &mut SyncManifest, key: String, hash: String, modified_at: i64) {
+    manifest.version = SYNC_MANIFEST_VERSION;
+    manifest.generated_at = chrono::Utc::now().timestamp_millis();
+    manifest.entries.insert(key, SyncManifestEntry { hash, modified_at });
 }
 
 async fn upload_dir_recursive(
     client: &reqwest::Client,
     config: &WebDavConfig,
     dir: &Path,
+    manifest_prefix: &str,
+    manifest: &mut SyncManifest,
     result: &mut SyncResult,
 ) {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -427,15 +484,31 @@ async fn upload_dir_recursive(
                 result.errors.push(format!("{}: {}", nested_config.remote_path, error));
                 continue;
             }
-            Box::pin(upload_dir_recursive(client, &nested_config, &path, result)).await;
+            let nested_prefix = format!("{}/", manifest_key(manifest_prefix, name).trim_end_matches('/'));
+            Box::pin(upload_dir_recursive(client, &nested_config, &path, &nested_prefix, manifest, result)).await;
             continue;
         }
 
         match fs::read_to_string(&path) {
-            Ok(content) => match webdav_upload(client, config, name, &content).await {
-                Ok(()) => result.uploaded.push(format!("{}{}", config.remote_path, name)),
-                Err(error) => result.errors.push(format!("{}: {}", name, error)),
-            },
+            Ok(content) => {
+                let content_hash = hash_content(&content);
+                let key = manifest_key(manifest_prefix, name);
+                if manifest.entries.get(&key).is_some_and(|entry| entry.hash == content_hash) {
+                    continue;
+                }
+                match webdav_upload(client, config, name, &content).await {
+                    Ok(()) => {
+                        result.uploaded.push(format!("{}{}", config.remote_path, name));
+                        upsert_manifest_entry(
+                            manifest,
+                            key,
+                            content_hash,
+                            path_modified_at(&path).unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+                        );
+                    }
+                    Err(error) => result.errors.push(format!("{}: {}", name, error)),
+                }
+            }
             Err(error) => result
                 .errors
                 .push(format!("{}: Failed to read file: {}", path.to_string_lossy(), error)),
@@ -447,6 +520,8 @@ async fn download_dir_recursive(
     client: &reqwest::Client,
     config: &WebDavConfig,
     local_dir: &Path,
+    manifest_prefix: &str,
+    manifest: &SyncManifest,
     result: &mut SyncResult,
 ) {
     let resources = match propfind(client, config, 1).await {
@@ -472,13 +547,22 @@ async fn download_dir_recursive(
                 continue;
             }
             let nested_config = scoped_config(config, &name);
-            Box::pin(download_dir_recursive(client, &nested_config, &nested_local, result)).await;
+            let nested_prefix = format!("{}/", manifest_key(manifest_prefix, &name).trim_end_matches('/'));
+            Box::pin(download_dir_recursive(client, &nested_config, &nested_local, &nested_prefix, manifest, result)).await;
             continue;
         }
 
         match webdav_download(client, config, &name).await {
             Ok(content) => {
                 let target = local_dir.join(&name);
+                let key = manifest_key(manifest_prefix, &name);
+                let content_hash = hash_content(&content);
+                if manifest.entries.get(&key).is_some_and(|entry| entry.hash == content_hash)
+                    && target.exists()
+                    && hash_file(&target).as_deref() == Some(content_hash.as_str())
+                {
+                    continue;
+                }
                 match fs::write(&target, &content) {
                     Ok(()) => result.downloaded.push(format!("{}{}", config.remote_path, name)),
                     Err(error) => result
@@ -500,24 +584,46 @@ pub async fn webdav_sync_preview(
     let client = webdav_client()?;
     let mut local_entries = collect_codex_preview_entries(&sync_config);
     let mut remote_entries = Vec::new();
+    let manifest = load_sync_manifest(&client, &config).await?;
 
     if sync_accounts {
         local_entries.extend(collect_accounts_preview_entries());
         remote_entries.extend(
-            list_remote_entries(&client, &scoped_config(&config, "accounts"), SyncItemType::Account, "").await?,
+            list_remote_entries(
+                &client,
+                &scoped_config(&config, "accounts"),
+                SyncItemType::Account,
+                "",
+                "accounts/",
+                &manifest,
+            ).await?,
         );
     }
 
     if sync_config.sync_prompts {
         remote_entries.extend(
-            list_remote_entries(&client, &scoped_config(&config, "prompts"), SyncItemType::Prompt, "prompts/")
+            list_remote_entries(
+                &client,
+                &scoped_config(&config, "prompts"),
+                SyncItemType::Prompt,
+                "prompts/",
+                "prompts/",
+                &manifest,
+            )
                 .await?,
         );
     }
 
     if sync_config.sync_skills {
         remote_entries.extend(
-            list_remote_entries(&client, &scoped_config(&config, "skills"), SyncItemType::Skill, "skills/")
+            list_remote_entries(
+                &client,
+                &scoped_config(&config, "skills"),
+                SyncItemType::Skill,
+                "skills/",
+                "skills/",
+                &manifest,
+            )
                 .await?,
         );
     }
@@ -533,12 +639,14 @@ pub async fn webdav_sync_preview(
                     name,
                     item_type: SyncItemType::Agents,
                     modified_at: resource.last_modified,
+                    hash: manifest.entries.get("AGENTS.MD").map(|entry| entry.hash.clone()),
                 });
             } else if sync_config.sync_config_toml && name == "config.toml" {
                 remote_entries.push(SyncPreviewEntry {
                     name,
                     item_type: SyncItemType::Config,
                     modified_at: resource.last_modified,
+                    hash: manifest.entries.get("config.toml").map(|entry| entry.hash.clone()),
                 });
             }
         }
@@ -562,6 +670,7 @@ pub async fn webdav_sync_upload(config: WebDavConfig) -> AppResult<SyncResult> {
     let client = webdav_client()?;
     let accounts_dir = get_accounts_dir();
     let accounts_config = scoped_config(&config, "accounts");
+    let mut manifest = load_sync_manifest(&client, &config).await?;
 
     let mut result = SyncResult {
         uploaded: Vec::new(),
@@ -588,16 +697,31 @@ pub async fn webdav_sync_upload(config: WebDavConfig) -> AppResult<SyncResult> {
             };
 
             match fs::read_to_string(&path) {
-                Ok(content) => match webdav_upload(&client, &accounts_config, filename, &content).await {
-                    Ok(()) => result.uploaded.push(filename.to_string()),
-                    Err(error) => result.errors.push(format!("{}: {}", filename, error)),
-                },
+                Ok(content) => {
+                    let content_hash = hash_content(&content);
+                    let key = manifest_key("accounts/", filename);
+                    if manifest.entries.get(&key).is_some_and(|entry| entry.hash == content_hash) {
+                        continue;
+                    }
+                    match webdav_upload(&client, &accounts_config, filename, &content).await {
+                        Ok(()) => {
+                            result.uploaded.push(filename.to_string());
+                            upsert_manifest_entry(
+                                &mut manifest,
+                                key,
+                                content_hash,
+                                path_modified_at(&path).unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+                            );
+                        }
+                        Err(error) => result.errors.push(format!("{}: {}", filename, error)),
+                    }
+                }
                 Err(error) => result.errors.push(format!("{}: Failed to read file: {}", filename, error)),
             }
         }
     }
 
-    let _ = write_sync_manifest(&client, &config).await;
+    let _ = write_sync_manifest(&client, &config, &manifest).await;
     trace::emit(
         "webdav",
         "sync_accounts_upload",
@@ -614,6 +738,7 @@ pub async fn webdav_sync_download(config: WebDavConfig) -> AppResult<SyncResult>
     let client = webdav_client()?;
     let accounts_dir = get_accounts_dir();
     let accounts_config = scoped_config(&config, "accounts");
+    let manifest = load_sync_manifest(&client, &config).await?;
 
     let mut result = SyncResult {
         uploaded: Vec::new(),
@@ -647,6 +772,14 @@ pub async fn webdav_sync_download(config: WebDavConfig) -> AppResult<SyncResult>
                     continue;
                 }
                 let target = accounts_dir.join(&filename);
+                let key = manifest_key("accounts/", &filename);
+                let content_hash = hash_content(&content);
+                if manifest.entries.get(&key).is_some_and(|entry| entry.hash == content_hash)
+                    && target.exists()
+                    && hash_file(&target).as_deref() == Some(content_hash.as_str())
+                {
+                    continue;
+                }
                 match fs::write(&target, &content) {
                     Ok(()) => result.downloaded.push(filename),
                     Err(error) => result.errors.push(format!("{}: Failed to write file: {}", target.to_string_lossy(), error)),
@@ -702,6 +835,7 @@ pub async fn webdav_sync_codex_upload(
 ) -> AppResult<SyncResult> {
     let client = webdav_client()?;
     let codex_dir = get_codex_dir();
+    let mut manifest = load_sync_manifest(&client, &config).await?;
 
     let mut result = SyncResult {
         uploaded: Vec::new(),
@@ -717,10 +851,23 @@ pub async fn webdav_sync_codex_upload(
         let agents_md = codex_dir.join("AGENTS.MD");
         if agents_md.exists() {
             match fs::read_to_string(&agents_md) {
-                Ok(content) => match webdav_upload(&client, &config, "AGENTS.MD", &content).await {
-                    Ok(()) => result.uploaded.push("AGENTS.MD".to_string()),
-                    Err(error) => result.errors.push(format!("AGENTS.MD: {}", error)),
-                },
+                Ok(content) => {
+                    let content_hash = hash_content(&content);
+                    if manifest.entries.get("AGENTS.MD").is_none_or(|entry| entry.hash != content_hash) {
+                        match webdav_upload(&client, &config, "AGENTS.MD", &content).await {
+                            Ok(()) => {
+                                result.uploaded.push("AGENTS.MD".to_string());
+                                upsert_manifest_entry(
+                                    &mut manifest,
+                                    "AGENTS.MD".to_string(),
+                                    content_hash,
+                                    path_modified_at(&agents_md).unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+                                );
+                            }
+                            Err(error) => result.errors.push(format!("AGENTS.MD: {}", error)),
+                        }
+                    }
+                }
                 Err(error) => result.errors.push(format!("AGENTS.MD: Failed to read file: {}", error)),
             }
         }
@@ -730,10 +877,23 @@ pub async fn webdav_sync_codex_upload(
         let config_toml = codex_dir.join("config.toml");
         if config_toml.exists() {
             match fs::read_to_string(&config_toml) {
-                Ok(content) => match webdav_upload(&client, &config, "config.toml", &content).await {
-                    Ok(()) => result.uploaded.push("config.toml".to_string()),
-                    Err(error) => result.errors.push(format!("config.toml: {}", error)),
-                },
+                Ok(content) => {
+                    let content_hash = hash_content(&content);
+                    if manifest.entries.get("config.toml").is_none_or(|entry| entry.hash != content_hash) {
+                        match webdav_upload(&client, &config, "config.toml", &content).await {
+                            Ok(()) => {
+                                result.uploaded.push("config.toml".to_string());
+                                upsert_manifest_entry(
+                                    &mut manifest,
+                                    "config.toml".to_string(),
+                                    content_hash,
+                                    path_modified_at(&config_toml).unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+                                );
+                            }
+                            Err(error) => result.errors.push(format!("config.toml: {}", error)),
+                        }
+                    }
+                }
                 Err(error) => result.errors.push(format!("config.toml: Failed to read file: {}", error)),
             }
         }
@@ -744,7 +904,7 @@ pub async fn webdav_sync_codex_upload(
         if let Err(error) = webdav_ensure_dir(&client, &prompts_config).await {
             result.errors.push(format!("prompts dir: {}", error));
         } else {
-            upload_dir_recursive(&client, &prompts_config, &get_prompts_dir(), &mut result).await;
+            upload_dir_recursive(&client, &prompts_config, &get_prompts_dir(), "prompts/", &mut manifest, &mut result).await;
         }
     }
 
@@ -753,11 +913,11 @@ pub async fn webdav_sync_codex_upload(
         if let Err(error) = webdav_ensure_dir(&client, &skills_config).await {
             result.errors.push(format!("skills dir: {}", error));
         } else {
-            upload_dir_recursive(&client, &skills_config, &get_skills_dir(), &mut result).await;
+            upload_dir_recursive(&client, &skills_config, &get_skills_dir(), "skills/", &mut manifest, &mut result).await;
         }
     }
 
-    let _ = write_sync_manifest(&client, &config).await;
+    let _ = write_sync_manifest(&client, &config, &manifest).await;
     trace::emit(
         "webdav",
         "sync_codex_upload",
@@ -776,6 +936,7 @@ pub async fn webdav_sync_codex_download(
 ) -> AppResult<SyncResult> {
     let client = webdav_client()?;
     let codex_dir = get_codex_dir();
+    let manifest = load_sync_manifest(&client, &config).await?;
 
     let mut result = SyncResult {
         uploaded: Vec::new(),
@@ -787,9 +948,15 @@ pub async fn webdav_sync_codex_download(
         match webdav_download(&client, &config, "AGENTS.MD").await {
             Ok(content) => {
                 let target = codex_dir.join("AGENTS.MD");
-                match fs::write(&target, &content) {
-                    Ok(()) => result.downloaded.push("AGENTS.MD".to_string()),
-                    Err(error) => result.errors.push(format!("AGENTS.MD: Failed to write file: {}", error)),
+                let content_hash = hash_content(&content);
+                if !(manifest.entries.get("AGENTS.MD").is_some_and(|entry| entry.hash == content_hash)
+                    && target.exists()
+                    && hash_file(&target).as_deref() == Some(content_hash.as_str()))
+                {
+                    match fs::write(&target, &content) {
+                        Ok(()) => result.downloaded.push("AGENTS.MD".to_string()),
+                        Err(error) => result.errors.push(format!("AGENTS.MD: Failed to write file: {}", error)),
+                    }
                 }
             }
             Err(error) if is_not_found(&error) => {}
@@ -801,9 +968,15 @@ pub async fn webdav_sync_codex_download(
         match webdav_download(&client, &config, "config.toml").await {
             Ok(content) => {
                 let target = codex_dir.join("config.toml");
-                match fs::write(&target, &content) {
-                    Ok(()) => result.downloaded.push("config.toml".to_string()),
-                    Err(error) => result.errors.push(format!("config.toml: Failed to write file: {}", error)),
+                let content_hash = hash_content(&content);
+                if !(manifest.entries.get("config.toml").is_some_and(|entry| entry.hash == content_hash)
+                    && target.exists()
+                    && hash_file(&target).as_deref() == Some(content_hash.as_str()))
+                {
+                    match fs::write(&target, &content) {
+                        Ok(()) => result.downloaded.push("config.toml".to_string()),
+                        Err(error) => result.errors.push(format!("config.toml: Failed to write file: {}", error)),
+                    }
                 }
             }
             Err(error) if is_not_found(&error) => {}
@@ -814,13 +987,27 @@ pub async fn webdav_sync_codex_download(
     if sync_config.sync_prompts {
         let prompts_dir = get_prompts_dir();
         let _ = fs::create_dir_all(&prompts_dir);
-        download_dir_recursive(&client, &scoped_config(&config, "prompts"), &prompts_dir, &mut result).await;
+        download_dir_recursive(
+            &client,
+            &scoped_config(&config, "prompts"),
+            &prompts_dir,
+            "prompts/",
+            &manifest,
+            &mut result,
+        ).await;
     }
 
     if sync_config.sync_skills {
         let skills_dir = get_skills_dir();
         let _ = fs::create_dir_all(&skills_dir);
-        download_dir_recursive(&client, &scoped_config(&config, "skills"), &skills_dir, &mut result).await;
+        download_dir_recursive(
+            &client,
+            &scoped_config(&config, "skills"),
+            &skills_dir,
+            "skills/",
+            &manifest,
+            &mut result,
+        ).await;
     }
 
     trace::emit(

@@ -10,11 +10,13 @@ export function useSkillsManager() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
+  const [selectedSkillContent, setSelectedSkillContent] = useState('');
   const [editContent, setEditContent] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] = useState('');
+  const isDirty = isEditing && selectedSkill !== null && editContent !== selectedSkillContent;
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -34,24 +36,40 @@ export function useSkillsManager() {
     void loadSkills();
   }, [loadSkills]);
 
+  const confirmDiscardChanges = useCallback(async () => {
+    if (!isDirty) {
+      return true;
+    }
+    return await confirmAction('Discard unsaved skill changes?', 'Unsaved Changes');
+  }, [isDirty]);
+
   const handleSelect = useCallback(async (skill: SkillInfo) => {
+    if (selectedSkill?.dirPath === skill.dirPath) {
+      return;
+    }
+    if (!await confirmDiscardChanges()) {
+      return;
+    }
     startTransition(() => {
       setSelectedSkill(skill);
       setIsEditing(false);
     });
     try {
       const content = await commands.readSkillContent(skill.dirPath);
+      setSelectedSkillContent(content);
       setEditContent(content);
     } catch (error) {
+      setSelectedSkillContent('');
       setEditContent('');
       notifyError(toErrorMessage(error), 'Read Skill');
     }
-  }, [notifyError]);
+  }, [confirmDiscardChanges, notifyError, selectedSkill?.dirPath]);
 
   const handleSave = useCallback(async () => {
     if (!selectedSkill) return;
     try {
       await commands.saveSkillContent(selectedSkill.dirPath, editContent);
+      setSelectedSkillContent(editContent);
       await loadSkills();
       setIsEditing(false);
       notifySuccess(`Saved "${selectedSkill.name}"`, 'Skills');
@@ -80,6 +98,16 @@ export function useSkillsManager() {
     setNewDescription('');
   }, []);
 
+  const closeCreateDialogWithConfirm = useCallback(async () => {
+    if (!newName.trim() && !newDescription.trim()) {
+      closeCreateDialog();
+      return;
+    }
+    if (await confirmAction('Discard new skill draft?', 'Discard Draft')) {
+      closeCreateDialog();
+    }
+  }, [closeCreateDialog, newDescription, newName]);
+
   const handleCreate = useCallback(async () => {
     if (!newName.trim()) return;
     try {
@@ -97,10 +125,18 @@ export function useSkillsManager() {
 
   const handleCancelEdit = useCallback(async () => {
     if (!selectedSkill) return;
+    if (!await confirmDiscardChanges()) {
+      return;
+    }
     const content = await commands.readSkillContent(selectedSkill.dirPath);
+    setSelectedSkillContent(content);
     setEditContent(content);
     setIsEditing(false);
-  }, [selectedSkill]);
+  }, [confirmDiscardChanges, selectedSkill]);
+
+  const startEditing = useCallback(() => {
+    setIsEditing(true);
+  }, []);
 
   return {
     skills,
@@ -108,11 +144,12 @@ export function useSkillsManager() {
     selectedSkill,
     editContent,
     isEditing,
+    isDirty,
     isCreating,
     newName,
     newDescription,
     setEditContent,
-    setIsEditing,
+    setIsEditing: startEditing,
     setIsCreating,
     setNewName,
     setNewDescription,
@@ -120,7 +157,8 @@ export function useSkillsManager() {
     handleSave,
     handleDelete,
     handleCreate,
-    closeCreateDialog,
+    closeCreateDialog: closeCreateDialogWithConfirm,
     handleCancelEdit,
+    confirmDiscardChanges,
   };
 }

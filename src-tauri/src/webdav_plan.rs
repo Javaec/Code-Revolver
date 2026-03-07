@@ -48,6 +48,7 @@ pub struct SyncPreviewEntry {
     pub name: String,
     pub item_type: SyncItemType,
     pub modified_at: Option<i64>,
+    pub hash: Option<String>,
 }
 
 const UNCHANGED_WINDOW_MS: i64 = 2_000;
@@ -79,10 +80,15 @@ pub fn build_sync_preview(
         let remote = remote_map.get(&(item_type.clone(), name.clone()));
         let local_time = local.and_then(|entry| entry.modified_at);
         let remote_time = remote.and_then(|entry| entry.modified_at);
+        let hashes_match = matches!(
+            (local.and_then(|entry| entry.hash.as_ref()), remote.and_then(|entry| entry.hash.as_ref())),
+            (Some(left), Some(right)) if left == right
+        );
 
         let action = match (local, remote) {
             (Some(_), None) => SyncItemAction::Upload,
             (None, Some(_)) => SyncItemAction::Download,
+            (Some(_), Some(_)) if hashes_match => SyncItemAction::Unchanged,
             (Some(_), Some(_)) => match (local_time, remote_time) {
                 (Some(left), Some(right)) if (left - right).abs() <= UNCHANGED_WINDOW_MS => SyncItemAction::Unchanged,
                 (Some(_), Some(_)) => SyncItemAction::Conflict,
@@ -125,15 +131,38 @@ mod tests {
                 name: "accounts/demo.json".to_string(),
                 item_type: SyncItemType::Account,
                 modified_at: Some(1000),
+                hash: Some("left".to_string()),
             }],
             vec![SyncPreviewEntry {
                 name: "accounts/demo.json".to_string(),
                 item_type: SyncItemType::Account,
                 modified_at: Some(6000),
+                hash: Some("right".to_string()),
             }],
         );
 
         assert_eq!(preview.conflict_count, 1);
         assert_eq!(preview.items[0].action, SyncItemAction::Conflict);
+    }
+
+    #[test]
+    fn treats_matching_hashes_as_unchanged_even_if_timestamps_differ() {
+        let preview = build_sync_preview(
+            vec![SyncPreviewEntry {
+                name: "prompts/demo.md".to_string(),
+                item_type: SyncItemType::Prompt,
+                modified_at: Some(1000),
+                hash: Some("same-hash".to_string()),
+            }],
+            vec![SyncPreviewEntry {
+                name: "prompts/demo.md".to_string(),
+                item_type: SyncItemType::Prompt,
+                modified_at: Some(9000),
+                hash: Some("same-hash".to_string()),
+            }],
+        );
+
+        assert_eq!(preview.conflict_count, 0);
+        assert_eq!(preview.items[0].action, SyncItemAction::Unchanged);
     }
 }

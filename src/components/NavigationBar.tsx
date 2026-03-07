@@ -3,21 +3,31 @@ import { Button } from './ui';
 
 export type ViewType = 'accounts' | 'prompts' | 'skills' | 'agents' | 'config' | 'gateway';
 
-interface NavItem {
-  id: Exclude<ViewType, 'accounts'>;
-  label: string;
-  icon: React.ReactNode;
-  colorClass: string;
-  gradientClass: string;
-}
-
 interface NavigationBarProps {
+  currentView: ViewType;
   onNavigate: (view: ViewType) => void;
   onPrefetchView?: (view: Exclude<ViewType, 'accounts'>) => void;
   onSync: () => void;
 }
 
-const navItems: NavItem[] = [
+const navItems: Array<{
+  id: ViewType;
+  label: string;
+  colorClass: string;
+  gradientClass: string;
+  icon: React.ReactNode;
+}> = [
+  {
+    id: 'accounts',
+    label: 'Accounts',
+    colorClass: 'text-cyan-300',
+    gradientClass: 'from-cyan-500/20 to-cyan-600/10',
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />
+      </svg>
+    ),
+  },
   {
     id: 'prompts',
     label: 'Prompts',
@@ -91,7 +101,7 @@ const itemVariants = {
   visible: { opacity: 1, y: 0 },
 };
 
-export function NavigationBar({ onNavigate, onPrefetchView, onSync }: NavigationBarProps) {
+export function NavigationBar({ currentView, onNavigate, onPrefetchView, onSync }: NavigationBarProps) {
   return (
     <motion.div
       className="flex flex-wrap gap-2"
@@ -100,17 +110,35 @@ export function NavigationBar({ onNavigate, onPrefetchView, onSync }: Navigation
       animate="visible"
     >
       {navItems.map((item) => (
-        <motion.div key={item.id} variants={itemVariants}>
+        <motion.div key={item.id} variants={itemVariants} className="min-w-0">
           <Button
-            variant="ghost"
+            variant={currentView === item.id ? 'secondary' : 'ghost'}
             size="sm"
-            className={`h-8 border border-white/10 bg-gradient-to-r ${item.gradientClass} text-slate-300`}
+            className={`h-9 gap-2 rounded-2xl border px-3 text-slate-300 transition-all ${
+              currentView === item.id
+                ? `border-white/20 bg-gradient-to-r ${item.gradientClass} text-white shadow-lg shadow-black/20`
+                : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
+            }`}
             onClick={() => onNavigate(item.id)}
-            onMouseEnter={() => onPrefetchView?.(item.id)}
-            onFocus={() => onPrefetchView?.(item.id)}
+            onMouseEnter={() => {
+              if (item.id !== 'accounts') {
+                onPrefetchView?.(item.id);
+              }
+            }}
+            onFocus={() => {
+              if (item.id !== 'accounts') {
+                onPrefetchView?.(item.id);
+              }
+            }}
+            aria-pressed={currentView === item.id}
           >
-            <span className={`${item.colorClass}`}>{item.icon}</span>
-            <span className="text-xs">{item.label}</span>
+            <span className={`${item.colorClass} ${currentView === item.id ? 'drop-shadow-[0_0_10px_rgba(255,255,255,0.12)]' : ''}`}>{item.icon}</span>
+            <span className="text-xs font-medium">{item.label}</span>
+            {currentView === item.id && (
+              <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-white/75">
+                Active
+              </span>
+            )}
           </Button>
         </motion.div>
       ))}
@@ -119,7 +147,7 @@ export function NavigationBar({ onNavigate, onPrefetchView, onSync }: Navigation
         <Button
           variant="outline"
           size="sm"
-          className="h-8 text-slate-300 border-white/15 bg-blue-500/10"
+          className="h-9 rounded-2xl border-white/15 bg-blue-500/10 px-3 text-slate-300 hover:border-blue-300/30 hover:bg-blue-500/15"
           onClick={onSync}
         >
           <span className="text-blue-400">

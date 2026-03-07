@@ -6,6 +6,7 @@ import { resolveWebDavRequestConfig, validateWebDavConfig } from '../lib/webdav'
 import { commands } from '../lib/commands';
 import { useNotifications } from '../lib/notificationState';
 import { toErrorMessage } from '../lib/errors';
+import { appendSyncHistory, getEnabledSyncItems, loadSyncHistory, SyncHistoryEntry } from '../lib/syncHistory';
 
 interface SyncConfirmDialogProps {
   isOpen: boolean;
@@ -38,6 +39,7 @@ export function SyncConfirmDialog({
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [preview, setPreview] = useState<SyncPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [syncHistory, setSyncHistory] = useState<SyncHistoryEntry[]>(() => loadSyncHistory());
   const { notifyError } = useNotifications();
 
   const sync = syncSettings || DEFAULT_SYNC_SETTINGS;
@@ -50,16 +52,6 @@ export function SyncConfirmDialog({
       setPreview(null);
     }
   }, [isOpen]);
-
-  const getSyncItems = () => {
-    const items: string[] = [];
-    if (sync.syncAccounts) items.push('Accounts');
-    if (sync.syncPrompts) items.push('Prompts');
-    if (sync.syncSkills) items.push('Skills');
-    if (sync.syncAgentsMd) items.push('AGENTS.MD');
-    if (sync.syncConfigToml) items.push('config.toml');
-    return items;
-  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -151,6 +143,7 @@ export function SyncConfirmDialog({
       // Update last sync time
       if (result.errors.length === 0 || result.uploaded.length > 0 || result.downloaded.length > 0) {
         onSyncComplete(Date.now());
+        setSyncHistory(appendSyncHistory(direction, sync, result, preview));
       }
     } catch (error) {
       setSyncResult({
@@ -164,7 +157,7 @@ export function SyncConfirmDialog({
     }
   };
 
-  const syncItems = getSyncItems();
+  const syncItems = getEnabledSyncItems(sync);
   const hasItems = syncItems.length > 0;
   const isSuccess = syncResult && syncResult.errors.length === 0;
   const conflictCount = preview?.conflictCount ?? 0;
@@ -352,6 +345,29 @@ export function SyncConfirmDialog({
                 <p className="text-xs text-slate-500 text-center mt-3">
                   Conflicts are detected up front. Upload overwrites cloud, download overwrites local.
                 </p>
+
+                {syncHistory.length > 0 && (
+                  <div className="mt-4 rounded-lg border border-white/10 bg-black/10 p-3">
+                    <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">Recent Sync History</div>
+                    <div className="max-h-36 space-y-2 overflow-y-auto custom-scrollbar">
+                      {syncHistory.slice(0, 5).map((entry) => (
+                        <div key={entry.id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="font-medium text-slate-200">
+                              {entry.direction === 'upload' ? 'Upload' : 'Download'} • {entry.syncItems.join(', ')}
+                            </div>
+                            <div className="text-slate-500">
+                              {new Date(entry.happenedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-slate-400">
+                            {entry.uploadedCount} uploaded • {entry.downloadedCount} downloaded • {entry.errorCount} errors • {entry.conflictCount} conflicts
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             )}
             </Card>

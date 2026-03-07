@@ -10,6 +10,12 @@ import type {
   UsageInfo,
 } from '../types';
 import { CommandError, toErrorMessage } from './errors';
+import {
+  normalizeBackendAppConfig,
+  normalizeSyncPreview,
+  normalizeSyncResult,
+  normalizeUsageInfo,
+} from './contracts';
 import type { WebDavRequestConfig } from './webdav';
 
 function toCommandError(error: unknown): CommandError {
@@ -33,12 +39,13 @@ export const commands = {
   openAccountsDir: () => invokeCommand<string>('open_accounts_dir'),
   openCodexDir: () => invokeCommand<string>('open_codex_dir'),
   scanAccounts: () => invokeCommand<ScanResult>('scan_accounts'),
-  fetchUsage: (filePath: string) => invokeCommand<UsageInfo>('fetch_usage', { filePath }),
+  fetchUsage: async (filePath: string) => normalizeUsageInfo(await invokeCommand<UsageInfo>('fetch_usage', { filePath })),
   switchAccount: (filePath: string) => invokeCommand<void>('switch_account', { filePath }),
   renameAccount: (oldPath: string, newName: string) => invokeCommand<void>('rename_account', { oldPath, newName }),
   getAccountsDirPath: () => invokeCommand<string>('get_accounts_dir_path'),
-  getAppConfig: () => invokeCommand<BackendAppConfig>('get_app_config'),
-  setDebugLogging: (enabled: boolean) => invokeCommand<BackendAppConfig>('set_debug_logging', { enabled }),
+  getAppConfig: async () => normalizeBackendAppConfig(await invokeCommand<BackendAppConfig>('get_app_config')),
+  setDebugLogging: async (enabled: boolean) =>
+    normalizeBackendAppConfig(await invokeCommand<BackendAppConfig>('set_debug_logging', { enabled })),
   setAccountsDir: (path: string) => invokeCommand<void>('set_accounts_dir', { path }),
   addAccount: (name: string, content: string) => invokeCommand<void>('add_account', { name, content }),
   deleteAccount: (filePath: string) => invokeCommand<void>('delete_account', { filePath }),
@@ -52,13 +59,15 @@ export const commands = {
   setGatewayPlatformKey: (platformKey: string) => invokeCommand<void>('set_gateway_platform_key', { platformKey }),
   testWebDavConnection: (config: WebDavRequestConfig) => invokeCommand<string>('webdav_test_connection', { config }),
   previewSync: (config: WebDavRequestConfig, syncConfig: CodexSyncConfig, syncAccounts: boolean) =>
-    invokeCommand<SyncPreview>('webdav_sync_preview', { config, syncConfig, syncAccounts }),
-  syncAccountsUpload: (config: WebDavRequestConfig) => invokeCommand<SyncResult>('webdav_sync_upload', { config }),
-  syncAccountsDownload: (config: WebDavRequestConfig) => invokeCommand<SyncResult>('webdav_sync_download', { config }),
+    invokeCommand<SyncPreview>('webdav_sync_preview', { config, syncConfig, syncAccounts }).then(normalizeSyncPreview),
+  syncAccountsUpload: (config: WebDavRequestConfig) =>
+    invokeCommand<SyncResult>('webdav_sync_upload', { config }).then(normalizeSyncResult),
+  syncAccountsDownload: (config: WebDavRequestConfig) =>
+    invokeCommand<SyncResult>('webdav_sync_download', { config }).then(normalizeSyncResult),
   syncCodexUpload: (config: WebDavRequestConfig, syncConfig: CodexSyncConfig) =>
-    invokeCommand<SyncResult>('webdav_sync_codex_upload', { config, syncConfig }),
+    invokeCommand<SyncResult>('webdav_sync_codex_upload', { config, syncConfig }).then(normalizeSyncResult),
   syncCodexDownload: (config: WebDavRequestConfig, syncConfig: CodexSyncConfig) =>
-    invokeCommand<SyncResult>('webdav_sync_codex_download', { config, syncConfig }),
+    invokeCommand<SyncResult>('webdav_sync_codex_download', { config, syncConfig }).then(normalizeSyncResult),
   scanPrompts: () => invokeCommand<PromptInfo[]>('scan_prompts'),
   savePromptContent: (filePath: string, content: string) => invokeCommand<void>('save_prompt_content', { filePath, content }),
   createPrompt: (name: string, description: string, content: string) => invokeCommand<string>('create_prompt', { name, description, content }),

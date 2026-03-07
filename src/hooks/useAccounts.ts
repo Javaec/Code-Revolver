@@ -14,16 +14,22 @@ import {
     sortAccountsByWeeklyRule,
 } from './useAccountsModel';
 import { useIntervalTask } from './useIntervalTask';
+import { useAdaptivePoll } from './useAdaptivePoll';
 import { commands } from '../lib/commands';
 import { useNotifications } from '../lib/notificationState';
 import { migrateLegacySecrets, loadStoredSettings, persistSettings } from '../lib/settingsStorage';
-import { loadUsageCache, saveUsageCache } from '../lib/usageCache';
+import { loadUsageCache, saveUsageCache, type UsageCacheEntry } from '../lib/usageCache';
 import { toErrorMessage } from '../lib/errors';
+import { mapWithConcurrency } from '../lib/asyncPool';
 
 type AccountMutationKind = 'switch' | 'rename' | 'delete' | 'refresh-token';
 type FailedMutation =
     | { kind: 'switch' | 'delete' | 'refresh-token'; filePath: string; message: string }
     | { kind: 'rename'; filePath: string; newName: string; message: string };
+
+const USAGE_FETCH_CONCURRENCY = 4;
+const ACTIVE_ACCOUNT_USAGE_POLL_MS = 20_000;
+const ACTIVE_ACCOUNT_USAGE_MAX_BACKOFF_MS = 120_000;
 
 export function useAccounts() {
     const { notifyError, notifyInfo } = useNotifications();
@@ -38,6 +44,7 @@ export function useAccounts() {
     const refreshRunIdRef = useRef(0);
     const autoSwitchInFlightRef = useRef(false);
     const accountMutationInFlightRef = useRef(false);
+    const usageCacheRef = useRef<Record<string, UsageCacheEntry>>(loadUsageCache());
 
     const [settings, setSettings] = useState<AppSettings>(() => loadStoredSettings());
     const settingsRef = useRef(settings);
@@ -125,6 +132,74 @@ export function useAccounts() {
         return await commands.fetchUsage(filePath);
     }, []);
 
+    const applyUsageSnapshot = useCallback((
+        filePath: string,
+        update: {
+            usage?: UsageInfo;
+            cachedAt: number;
+            isTokenExpired: boolean;
+        },
+        options?: { persistCache?: boolean },
+    ) => {
+        if (update.usage) {
+            usageCacheRef.current[filePath] = {
+                usage: update.usage,
+                cachedAt: update.cachedAt,
+            };
+            if (options?.persistCache !== false) {
+                saveUsageCache(usageCacheRef.current);
+            }
+        }
+
+        setAccounts((prevAccounts) => sortAccountsByWeeklyRule(prevAccounts.map((account) => (
+            account.filePath === filePath
+                ? {
+                    ...account,
+                    usage: update.usage ?? account.usage,
+                    lastUsageUpdate: update.cachedAt,
+                    isTokenExpired: update.isTokenExpired,
+                }
+                : account
+        ))));
+    }, []);
+
+    const refreshAccountUsage = useCallback(async (
+        filePath: string,
+        options?: { markLoading?: boolean; persistCache?: boolean },
+    ): Promise<boolean> => {
+        if (options?.markLoading) {
+            setUsageLoadingByPath((prev) => ({ ...prev, [filePath]: true }));
+        }
+
+        try {
+            const usage = await fetchUsage(filePath);
+            const cachedAt = Date.now();
+            applyUsageSnapshot(filePath, {
+                usage,
+                cachedAt,
+                isTokenExpired: false,
+            }, { persistCache: options?.persistCache });
+            return true;
+        } catch (error) {
+            const errorMessage = toErrorMessage(error);
+            const isExpired = errorMessage.includes('401')
+                || errorMessage.includes('403')
+                || errorMessage.includes('Status: 401')
+                || errorMessage.includes('Status: 403');
+            const cached = usageCacheRef.current[filePath];
+            applyUsageSnapshot(filePath, {
+                usage: cached?.usage,
+                cachedAt: cached?.cachedAt ?? Date.now(),
+                isTokenExpired: isExpired,
+            }, { persistCache: false });
+            return false;
+        } finally {
+            if (options?.markLoading) {
+                setUsageLoadingByPath((prev) => ({ ...prev, [filePath]: false }));
+            }
+        }
+    }, [applyUsageSnapshot, fetchUsage]);
+
     const withAccountMutationLock = useCallback(async <T,>(
         filePath: string,
         kind: AccountMutationKind,
@@ -158,7 +233,7 @@ export function useAccounts() {
 
             try {
                 const result = await commands.scanAccounts();
-                const usageCache = loadUsageCache();
+                const usageCache = usageCacheRef.current;
                 const accountPool = settingsRef.current.accountPool;
                 const usageUpdatesByPath: Record<string, {
                     usage?: UsageInfo;
@@ -198,7 +273,7 @@ export function useAccounts() {
                 ) as Record<string, boolean>;
                 setUsageLoadingByPath(loadingMap);
 
-                await Promise.allSettled(baseAccounts.map(async (account) => {
+                await mapWithConcurrency(baseAccounts, USAGE_FETCH_CONCURRENCY, async (account) => {
                     try {
                         const usage = await fetchUsage(account.filePath);
                         const cachedAt = Date.now();
@@ -213,7 +288,7 @@ export function useAccounts() {
                             isTokenExpired: false,
                         };
                     } catch (error: unknown) {
-                        const errStr = String(error);
+                        const errStr = toErrorMessage(error);
                         const isExpired = errStr.includes('401')
                             || errStr.includes('403')
                             || errStr.includes('Status: 401')
@@ -227,9 +302,10 @@ export function useAccounts() {
                     } finally {
                         setUsageLoadingByPath((prev) => ({ ...prev, [account.filePath]: false }));
                     }
-                }));
+                });
 
                 if (usageCacheChanged) {
+                    usageCacheRef.current = usageCache;
                     saveUsageCache(usageCache);
                 }
 
@@ -372,6 +448,33 @@ export function useAccounts() {
 
     useIntervalTask(settings.autoCheck, settings.checkInterval * 60 * 1000, () => {
         void refresh();
+    });
+
+    const activeAccountFilePath = useMemo(
+        () => accounts.find((account) => account.isActive)?.filePath ?? null,
+        [accounts],
+    );
+
+    useEffect(() => {
+        if (!activeAccountFilePath || loading) {
+            return;
+        }
+        void refreshAccountUsage(activeAccountFilePath, { markLoading: true, persistCache: true });
+    }, [activeAccountFilePath, loading, refreshAccountUsage]);
+
+    useAdaptivePoll({
+        enabled: Boolean(activeAccountFilePath) && !loading && !activeAccountMutation,
+        baseDelayMs: ACTIVE_ACCOUNT_USAGE_POLL_MS,
+        maxDelayMs: ACTIVE_ACCOUNT_USAGE_MAX_BACKOFF_MS,
+        task: async () => {
+            if (!activeAccountFilePath) {
+                return false;
+            }
+            return await refreshAccountUsage(activeAccountFilePath, {
+                markLoading: true,
+                persistCache: true,
+            });
+        },
     });
 
     useEffect(() => {

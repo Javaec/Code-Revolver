@@ -13,23 +13,36 @@ export function AgentsPanel({ onBack }: AgentsPanelProps) {
     saveTitle: 'AGENTS.MD',
   });
 
+  const handleBack = async (): Promise<void> => {
+    if (await editor.confirmDiscardChanges()) {
+      onBack();
+    }
+  };
+
   return (
     <TextDocumentPanel
       title="AGENTS.MD"
-      onBack={onBack}
+      onBack={handleBack}
       content={editor.content}
       editContent={editor.editContent}
       loading={editor.loading}
       isEditing={editor.isEditing}
       saving={editor.saving}
+      isDirty={editor.isDirty}
+      autosaveState={editor.autosaveState}
+      lastSavedAt={editor.lastSavedAt}
+      canUndo={editor.canUndo}
       emptyStateTitle="AGENTS.MD file does not exist"
       emptyStateIconPath="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
       editorPlaceholder="# AGENTS.MD&#10;&#10;Write system prompts here..."
       useMarkdownPreview
       onEditContentChange={editor.setEditContent}
-      onStartEditing={() => editor.setIsEditing(true)}
-      onCancelEditing={editor.cancelEditing}
+      onStartEditing={editor.setIsEditing}
+      onCancelEditing={async () => {
+        await editor.cancelEditing();
+      }}
       onSave={editor.handleSave}
+      onUndo={editor.undoEdit}
     />
   );
 }
