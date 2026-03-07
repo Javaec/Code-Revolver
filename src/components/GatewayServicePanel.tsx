@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { GatewaySettings } from '../types';
 import { Badge, Button, Card, Input } from './ui';
+import { useIntervalTask } from '../hooks/useIntervalTask';
 
 interface GatewayServicePanelProps {
   gateway: GatewaySettings;
@@ -21,18 +22,12 @@ function formatLastPing(timestamp?: number): string {
 export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayServicePanelProps) {
   const [showKey, setShowKey] = useState(false);
 
-  useEffect(() => {
-    if (!gateway.enabled) return;
-    const intervalMs = Math.max(15, gateway.keepAliveIntervalSec) * 1000;
-    const timer = window.setInterval(() => {
-      onUpdateGateway({
-        status: 'online',
-        lastKeepAliveAt: Date.now(),
-      });
-    }, intervalMs);
-
-    return () => window.clearInterval(timer);
-  }, [gateway.enabled, gateway.keepAliveIntervalSec, onUpdateGateway]);
+  useIntervalTask(gateway.enabled, Math.max(15, gateway.keepAliveIntervalSec) * 1000, () => {
+    onUpdateGateway({
+      status: 'online',
+      lastKeepAliveAt: Date.now(),
+    });
+  });
 
   const statusLabel = useMemo(() => {
     if (!gateway.enabled) return 'Stopped';
@@ -157,4 +152,3 @@ export function GatewayServicePanel({ gateway, onUpdateGateway }: GatewayService
     </Card>
   );
 }
-

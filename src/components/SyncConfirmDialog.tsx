@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WebDavConfig, SyncSettings, SyncResult, DEFAULT_SYNC_SETTINGS } from '../types';
 import { Button, Card } from './ui';
+import { buildWebDavRequestConfig, validateWebDavConfig } from '../lib/webdav';
 
 interface SyncConfirmDialogProps {
   isOpen: boolean;
@@ -55,11 +56,12 @@ export function SyncConfirmDialog({
   };
 
   const handleSync = async (direction: 'upload' | 'download') => {
-    if (!webdavConfig.enabled) {
+    const validationError = validateWebDavConfig(webdavConfig);
+    if (validationError) {
       setSyncResult({
         uploaded: [],
         downloaded: [],
-        errors: ['Please configure and enable WebDAV in settings first'],
+        errors: [validationError],
       });
       return;
     }
@@ -69,12 +71,7 @@ export function SyncConfirmDialog({
     setSyncResult(null);
 
     try {
-      const config = {
-        url: webdavConfig.url,
-        username: webdavConfig.username,
-        password: webdavConfig.password,
-        remotePath: webdavConfig.remotePath,
-      };
+      const config = buildWebDavRequestConfig(webdavConfig);
 
       const syncConfig = {
         syncPrompts: sync.syncPrompts,

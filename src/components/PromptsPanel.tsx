@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button, Card, Input } from './ui';
+import { confirmAction, showError } from '../lib/dialogs';
 
 // Strip YAML frontmatter, keep only the body
 function stripFrontmatter(content: string): string {
@@ -75,7 +76,7 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
   };
 
   const handleDelete = async (prompt: PromptInfo) => {
-    if (!confirm(`Are you sure you want to delete "${prompt.name}"?`)) return;
+    if (!await confirmAction(`Delete prompt "${prompt.name}"?`, 'Delete Prompt')) return;
     try {
       await invoke('delete_prompt', { filePath: prompt.filePath });
       if (selectedPrompt?.filePath === prompt.filePath) {
@@ -102,7 +103,7 @@ export function PromptsPanel({ onBack }: PromptsPanelProps) {
       await loadPrompts();
     } catch (error) {
       console.error('Create failed:', error);
-      alert(String(error));
+      await showError(error, 'Create Prompt');
     }
   };
 

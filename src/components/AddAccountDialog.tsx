@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useAccounts } from '../hooks/useAccounts';
+import { MutationResult } from '../types';
 import { Button, Card, Input } from './ui';
 
 interface AddAccountDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  onAddAccount: (name: string, content: string) => Promise<MutationResult>;
 }
 
 const overlayVariants = {
@@ -19,8 +20,7 @@ const dialogVariants = {
   exit: { opacity: 0, scale: 0.95, y: 10, transition: { duration: 0.1 } },
 };
 
-export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps) {
-  const { addAccount } = useAccounts();
+export function AddAccountDialog({ isOpen, onClose, onAddAccount }: AddAccountDialogProps) {
   const [name, setName] = useState('');
   const [jsonContent, setJsonContent] = useState('');
   const [error, setError] = useState('');
@@ -39,10 +39,8 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps) {
     }
     setLoading(true);
     setError('');
-    const result = await addAccount(name, jsonContent);
+    const result = await onAddAccount(name, jsonContent);
     if (result.success) {
-      // Add a slight delay to ensure UI refreshes correctly
-      await new Promise(resolve => setTimeout(resolve, 500));
       onClose();
       setName('');
       setJsonContent('');

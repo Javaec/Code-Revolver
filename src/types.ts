@@ -57,7 +57,8 @@ export interface WebDavConfig {
     enabled: boolean;
     url: string;        // https://dav.jianguoyun.com/dav/
     username: string;   // Nutstore login email
-    password: string;   // App-specific password
+    password: string;   // Session value, persisted securely outside localStorage
+    hasStoredPassword?: boolean;
     remotePath: string; // Remote directory path, e.g., /code-revolver/
 }
 
@@ -81,6 +82,7 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
 };
 
 export interface AppSettings {
+    settingsVersion: number;
     accountsDir?: string;
     autoCheck: boolean;
     checkInterval: number; // minutes
@@ -103,6 +105,7 @@ export const DEFAULT_GATEWAY_SETTINGS: GatewaySettings = {
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
+    settingsVersion: 2,
     autoCheck: true,
     checkInterval: 30,
     enableAutoSwitch: false,
@@ -114,6 +117,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
         url: 'https://dav.jianguoyun.com/dav/',
         username: '',
         password: '',
+        hasStoredPassword: false,
         remotePath: '/code-revolver/',
     },
     sync: DEFAULT_SYNC_SETTINGS,

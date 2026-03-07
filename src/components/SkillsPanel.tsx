@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button, Card, Input } from './ui';
+import { confirmAction, showError } from '../lib/dialogs';
 
 // Strip YAML frontmatter, keep only the body
 function stripFrontmatter(content: string): string {
@@ -80,7 +81,7 @@ export function SkillsPanel({ onBack }: SkillsPanelProps) {
   };
 
   const handleDelete = async (skill: SkillInfo) => {
-    if (!confirm(`Are you sure you want to delete "${skill.name}"? This will delete the entire skill directory!`)) return;
+    if (!await confirmAction(`Delete skill "${skill.name}" and its entire directory?`, 'Delete Skill')) return;
     try {
       await invoke('delete_skill', { dirPath: skill.dirPath });
       if (selectedSkill?.dirPath === skill.dirPath) {
@@ -105,7 +106,7 @@ export function SkillsPanel({ onBack }: SkillsPanelProps) {
       await loadSkills();
     } catch (error) {
       console.error('Create failed:', error);
-      alert(String(error));
+      await showError(error, 'Create Skill');
     }
   };
 

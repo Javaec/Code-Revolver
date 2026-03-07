@@ -14,6 +14,7 @@ import { AccountPoolPanel } from './components/AccountPoolPanel';
 import { GatewayPanel } from './components/GatewayPanel';
 import { PoolMetadataDialog } from './components/PoolMetadataDialog';
 import { useAccounts } from './hooks/useAccounts';
+import { useIntervalTask } from './hooks/useIntervalTask';
 import { invoke } from '@tauri-apps/api/core';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AccountInfo, AccountPoolMetadata, DEFAULT_SYNC_SETTINGS, GatewaySettings } from './types';
@@ -40,6 +41,7 @@ const pageVariants = {
 function App() {
   const {
     accounts,
+    accountsDir,
     loading,
     refresh,
     switchAccount,
@@ -47,10 +49,14 @@ function App() {
     settings,
     updateSettings,
     renameAccount,
+    setAccountsDir,
+    addAccount,
+    refreshAccountToken,
     bestCandidateFilePath,
     rankedCandidates,
     updateAccountPoolMetadata,
-    usageLoadingByPath
+    usageLoadingByPath,
+    activeAccountMutation
   } = useAccounts();
 
   const [currentView, setCurrentView] = useState<ViewType>('accounts');
@@ -60,6 +66,11 @@ function App() {
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [editingAccount, setEditingAccount] = useState<AccountInfo | null>(null);
   const [poolEditingAccount, setPoolEditingAccount] = useState<AccountInfo | null>(null);
+  const [clockTickMs, setClockTickMs] = useState(() => Date.now());
+
+  useIntervalTask(true, 60_000, () => {
+    setClockTickMs(Date.now());
+  });
 
   const handleOpenDir = async () => {
     try {
@@ -205,11 +216,14 @@ function App() {
                             onEdit={() => setEditingAccount(account)}
                             onEditPool={() => setPoolEditingAccount(account)}
                             onDelete={() => deleteAccount(account.filePath)}
+                            onRefreshToken={() => refreshAccountToken(account.filePath)}
                             renameAccount={renameAccount}
                             isBestCandidate={account.filePath === bestCandidateFilePath}
                             isPrivacyMode={isPrivacyMode}
                             isUsageLoading={usageLoadingByPath[account.filePath] ?? false}
-                            onRefresh={refresh}
+                            isMutationLocked={!!activeAccountMutation}
+                            activeMutationKind={activeAccountMutation?.filePath === account.filePath ? activeAccountMutation.kind : null}
+                            clockTickMs={clockTickMs}
                           />
                         </motion.div>
                       ))}
@@ -298,6 +312,7 @@ function App() {
         <AddAccountDialog
           isOpen={isAddDialogOpen}
           onClose={() => setIsAddDialogOpen(false)}
+          onAddAccount={addAccount}
         />
 
         <EditAccountDialog
@@ -311,6 +326,8 @@ function App() {
           isOpen={isSettingsOpen}
           onClose={() => setIsSettingsOpen(false)}
           settings={settings}
+          accountsDir={accountsDir}
+          onSetAccountsDir={setAccountsDir}
           onUpdateSettings={updateSettings}
         />
 

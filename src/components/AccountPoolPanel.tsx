@@ -15,9 +15,13 @@ function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-function average(values: number[]): number {
-  if (values.length === 0) return 0;
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
   return values.reduce((sum, current) => sum + current, 0) / values.length;
+}
+
+function getUsageValue(value: number | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 export function AccountPoolPanel({
@@ -30,8 +34,16 @@ export function AccountPoolPanel({
 }: AccountPoolPanelProps) {
   const activeAccount = accounts.find((account) => account.isActive) || null;
   const availableAccounts = accounts.filter((account) => !account.isTokenExpired);
-  const primarySnapshot = average(availableAccounts.map((account) => account.usage?.primaryWindow?.usedPercent ?? 0));
-  const weeklySnapshot = average(availableAccounts.map((account) => account.usage?.secondaryWindow?.usedPercent ?? 0));
+  const primarySnapshot = average(
+    availableAccounts
+      .map((account) => getUsageValue(account.usage?.primaryWindow?.usedPercent))
+      .filter((value): value is number => value !== null),
+  );
+  const weeklySnapshot = average(
+    availableAccounts
+      .map((account) => getUsageValue(account.usage?.secondaryWindow?.usedPercent))
+      .filter((value): value is number => value !== null),
+  );
 
   return (
     <Card className="p-3 border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-slate-900/35 to-slate-900/45">
@@ -86,19 +98,19 @@ export function AccountPoolPanel({
           <div>
             <div className="flex justify-between text-[11px] text-slate-400 mb-1">
               <span>5H</span>
-              <span>{Math.round(primarySnapshot)}%</span>
+              <span>{primarySnapshot === null ? '--' : `${Math.round(primarySnapshot)}%`}</span>
             </div>
             <div className="h-1.5 rounded-full bg-slate-800/70 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-cyan-500/70 to-cyan-300/70" style={{ width: `${clampPercent(primarySnapshot)}%` }} />
+              <div className="h-full bg-gradient-to-r from-cyan-500/70 to-cyan-300/70" style={{ width: `${clampPercent(primarySnapshot ?? 0)}%` }} />
             </div>
           </div>
           <div>
             <div className="flex justify-between text-[11px] text-slate-400 mb-1">
               <span>7D</span>
-              <span>{Math.round(weeklySnapshot)}%</span>
+              <span>{weeklySnapshot === null ? '--' : `${Math.round(weeklySnapshot)}%`}</span>
             </div>
             <div className="h-1.5 rounded-full bg-slate-800/70 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-emerald-500/70 to-emerald-300/70" style={{ width: `${clampPercent(weeklySnapshot)}%` }} />
+              <div className="h-full bg-gradient-to-r from-emerald-500/70 to-emerald-300/70" style={{ width: `${clampPercent(weeklySnapshot ?? 0)}%` }} />
             </div>
           </div>
         </div>
@@ -113,7 +125,7 @@ export function AccountPoolPanel({
         ) : (
           <div className="space-y-1">
             {rankedCandidates.slice(0, 3).map((candidate, index) => (
-              <div key={candidate.id} className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-2">
+              <div key={candidate.filePath} className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="text-xs text-white truncate">

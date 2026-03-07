@@ -1,3 +1,12 @@
+mod account_files;
+
+use account_files::{
+    collect_account_files,
+    files_have_same_content,
+    paths_match,
+    resolve_available_account_target,
+    resolve_managed_account_path,
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -102,28 +111,12 @@ fn get_codex_auth_file() -> PathBuf {
     home.join(".codex").join("auth.json")
 }
 
-fn paths_match(a: &PathBuf, b: &PathBuf) -> bool {
-    if a == b {
-        return true;
-    }
+const WEBDAV_SECRET_SERVICE: &str = "code-revolver";
+const WEBDAV_SECRET_ACCOUNT: &str = "webdav";
 
-    let a_canonical = fs::canonicalize(a).ok();
-    let b_canonical = fs::canonicalize(b).ok();
-    if let (Some(a_path), Some(b_path)) = (a_canonical, b_canonical) {
-        return a_path == b_path;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return a
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&b.to_string_lossy());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        a.to_string_lossy() == b.to_string_lossy()
-    }
+fn webdav_password_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(WEBDAV_SECRET_SERVICE, WEBDAV_SECRET_ACCOUNT)
+        .map_err(|e| format!("Failed to initialize secure password storage: {}", e))
 }
 
 // ========== JWT Parsing ==========
@@ -213,62 +206,32 @@ fn scan_accounts() -> Result<ScanResult, String> {
         None
     };
     
-    // Scan all json files in the directory
-    let mut accounts = Vec::new();
-    
-    if let Ok(entries) = fs::read_dir(&accounts_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            
-            // Only process .json files
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
+    let mut account_files = collect_account_files(&accounts_dir, Some(&codex_auth))?;
+    account_files.sort_by(|a, b| a.path.to_string_lossy().cmp(&b.path.to_string_lossy()));
 
-            // Avoid listing the runtime auth mirror file as a separate profile.
-            if paths_match(&path, &codex_auth) {
-                continue;
-            }
-            
-            let metadata = fs::metadata(&path)
-                .map_err(|e| format!("Failed to read account file metadata: {}", e))?;
-            let modified_at = metadata
-                .modified()
-                .map_err(|e| format!("Failed to read account file modified time: {}", e))?
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| format!("Failed to compute account file modified time: {}", e))?
-                .as_millis() as i64;
+    let accounts = account_files.into_iter().map(|file| {
+        let (email, plan_type, subscription_end, expires_at) = extract_info_from_auth(&file.auth);
+        let name = file.path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Untitled")
+            .to_string();
+        let is_active = active_account_id.as_ref()
+            .map(|id| id == &file.auth.tokens.account_id)
+            .unwrap_or(false);
 
-            // Read and parse
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(auth) = serde_json::from_str::<CodexAuthFile>(&content) {
-                    let (email, plan_type, subscription_end, expires_at) = extract_info_from_auth(&auth);
-                    
-                    let name = path.file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("Untitled")
-                        .to_string();
-                    
-                    let is_active = active_account_id.as_ref()
-                        .map(|id| id == &auth.tokens.account_id)
-                        .unwrap_or(false);
-                    
-                    accounts.push(AccountInfo {
-                        id: auth.tokens.account_id,
-                        name,
-                        email,
-                        plan_type,
-                        subscription_end,
-                        is_active,
-                        file_path: path.to_string_lossy().to_string(),
-                        auth_updated_at: modified_at,
-                        expires_at,
-                        last_refresh: auth.last_refresh.clone(),
-                    });
-                }
-            }
+        AccountInfo {
+            id: file.auth.tokens.account_id,
+            name,
+            email,
+            plan_type,
+            subscription_end,
+            is_active,
+            file_path: file.path.to_string_lossy().to_string(),
+            auth_updated_at: file.modified_at,
+            expires_at,
+            last_refresh: file.auth.last_refresh,
         }
-    }
+    }).collect();
     
     Ok(ScanResult {
         accounts,
@@ -279,7 +242,7 @@ fn scan_accounts() -> Result<ScanResult, String> {
 /// Switch to specified account (copy auth file to ~/.codex/auth.json)
 #[tauri::command]
 fn switch_account(file_path: String) -> Result<(), String> {
-    let source = PathBuf::from(&file_path);
+    let source = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
     let target = get_codex_auth_file();
     
     if !source.exists() {
@@ -353,6 +316,31 @@ fn get_app_config() -> AppConfig {
     load_config()
 }
 
+#[tauri::command]
+fn get_webdav_password() -> Result<Option<String>, String> {
+    let entry = webdav_password_entry()?;
+    match entry.get_password() {
+        Ok(password) => Ok(Some(password)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Failed to load WebDAV password: {}", e)),
+    }
+}
+
+#[tauri::command]
+fn set_webdav_password(password: String) -> Result<(), String> {
+    let entry = webdav_password_entry()?;
+    if password.trim().is_empty() {
+        return match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(format!("Failed to clear WebDAV password: {}", e)),
+        };
+    }
+
+    entry
+        .set_password(&password)
+        .map_err(|e| format!("Failed to save WebDAV password: {}", e))
+}
+
 /// Set accounts directory
 #[tauri::command]
 fn set_accounts_dir(path: String) -> Result<(), String> {
@@ -365,26 +353,36 @@ fn set_accounts_dir(path: String) -> Result<(), String> {
     save_config(&config)?;
 
     // Auto-copy specific logic
-    if old_dir != new_dir && old_dir.exists() {
-         // Create new directory if needed
+    if !paths_match(&old_dir, &new_dir) && old_dir.exists() {
         if !new_dir.exists() {
             fs::create_dir_all(&new_dir).map_err(|e| format!("Failed to create new directory: {}", e))?;
         }
 
-        // Iterate and copy
-        if let Ok(entries) = fs::read_dir(&old_dir) {
-            for entry in entries.flatten() {
-                let entry_path = entry.path();
-                if entry_path.is_file() && entry_path.extension().map_or(false, |ext| ext == "json") {
-                    if let Some(file_name) = entry_path.file_name() {
-                        let target_path = new_dir.join(file_name);
-                        // Copy but don't error if fail (e.g. exists)
-                        if !target_path.exists() {
-                            let _ = fs::copy(&entry_path, &target_path);
-                        }
-                    }
+        let mut source_files = collect_account_files(&old_dir, None)?;
+        source_files.sort_by(|a, b| a.path.to_string_lossy().cmp(&b.path.to_string_lossy()));
+
+        for file in source_files {
+            let preferred_target = match file.path.file_name() {
+                Some(file_name) => new_dir.join(file_name),
+                None => resolve_available_account_target(&new_dir, "account"),
+            };
+
+            if preferred_target.exists() {
+                if files_have_same_content(&file.path, &preferred_target) {
+                    continue;
                 }
+
+                let file_stem = file.path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("account");
+                let target_path = resolve_available_account_target(&new_dir, file_stem);
+                fs::copy(&file.path, &target_path)
+                    .map_err(|e| format!("Failed to copy '{}' to new directory: {}", file.path.to_string_lossy(), e))?;
+                continue;
             }
+
+            fs::copy(&file.path, &preferred_target)
+                .map_err(|e| format!("Failed to copy '{}' to new directory: {}", file.path.to_string_lossy(), e))?;
         }
     }
     
@@ -394,7 +392,7 @@ fn set_accounts_dir(path: String) -> Result<(), String> {
 /// Rename account
 #[tauri::command]
 fn rename_account(old_path: String, new_name: String) -> Result<(), String> {
-    let source = PathBuf::from(&old_path);
+    let source = resolve_managed_account_path(&old_path, &get_accounts_dir())?;
     if !source.exists() {
         return Err("Source file does not exist".to_string());
     }
@@ -415,7 +413,7 @@ fn rename_account(old_path: String, new_name: String) -> Result<(), String> {
 /// Read account file content
 #[tauri::command]
 fn read_account_content(file_path: String) -> Result<String, String> {
-    let path = PathBuf::from(&file_path);
+    let path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
     if !path.exists() {
         return Err("File does not exist".to_string());
     }
@@ -434,7 +432,7 @@ fn read_account_content(file_path: String) -> Result<String, String> {
 /// Update account file content
 #[tauri::command]
 fn update_account_content(file_path: String, content: String) -> Result<(), String> {
-    let path = PathBuf::from(&file_path);
+    let path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
     if !path.exists() {
         return Err("File does not exist".to_string());
     }
@@ -480,7 +478,7 @@ fn add_account(name: String, content: String) -> Result<(), String> {
         fs::create_dir_all(&accounts_dir)
             .map_err(|e| format!("Failed to create accounts directory: {}", e))?;
     }
-    
+
     let target_path = accounts_dir.join(format!("{}.json", file_name));
     
     // 4. Check if exists
@@ -501,7 +499,7 @@ fn add_account(name: String, content: String) -> Result<(), String> {
 /// Delete account
 #[tauri::command]
 fn delete_account(file_path: String) -> Result<(), String> {
-    let path = std::path::PathBuf::from(file_path);
+    let path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
     if !path.exists() {
         return Err("Account file not found".to_string());
     }
@@ -557,8 +555,9 @@ struct ApiUsageResponse {
 /// Fetch account usage information
 #[tauri::command]
 async fn fetch_usage(file_path: String) -> Result<UsageInfo, String> {
+    let validated_path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
     // Read auth file
-    let content = fs::read_to_string(&file_path)
+    let content = fs::read_to_string(&validated_path)
         .map_err(|e| format!("Failed to read authentication file: {}", e))?;
     
     let auth: CodexAuthFile = serde_json::from_str(&content)
@@ -691,8 +690,6 @@ async fn webdav_upload(client: &reqwest::Client, config: &WebDavConfig, filename
     let encoded_filename = urlencoding::encode(filename);
     let url = format!("{}{}{}", config.url.trim_end_matches('/'), remote_path, encoded_filename);
     
-    println!("[WebDAV] Uploading file: {}", url);
-    
     let response = client
         .put(&url)
         .basic_auth(&config.username, Some(&config.password))
@@ -703,7 +700,6 @@ async fn webdav_upload(client: &reqwest::Client, config: &WebDavConfig, filename
         .map_err(|e| format!("Upload failed: {}", e))?;
     
     let status = response.status();
-    println!("[WebDAV] Upload response status: {}", status);
     
     if status.is_success() || status.as_u16() == 201 {
         Ok(())
@@ -719,8 +715,6 @@ async fn webdav_download(client: &reqwest::Client, config: &WebDavConfig, filena
     let encoded_filename = urlencoding::encode(filename);
     let url = format!("{}{}{}", config.url.trim_end_matches('/'), remote_path, encoded_filename);
     
-    println!("[WebDAV] Downloading file: {}", url);
-    
     let response = client
         .get(&url)
         .basic_auth(&config.username, Some(&config.password))
@@ -730,11 +724,9 @@ async fn webdav_download(client: &reqwest::Client, config: &WebDavConfig, filena
         .map_err(|e| format!("Download failed: {}", e))?;
     
     let status = response.status();
-    println!("[WebDAV] Download response status: {}", status);
     
     if status.is_success() {
         let content = response.text().await.map_err(|e| format!("Failed to read response: {}", e))?;
-        println!("[WebDAV] Download successful: {} ({} bytes)", filename, content.len());
         Ok(content)
     } else {
         Err(format!("Download failed: HTTP {}", status))
@@ -745,8 +737,6 @@ async fn webdav_download(client: &reqwest::Client, config: &WebDavConfig, filena
 async fn webdav_list(client: &reqwest::Client, config: &WebDavConfig) -> Result<Vec<String>, String> {
     let remote_path = normalize_remote_path(&config.remote_path);
     let url = format!("{}{}", config.url.trim_end_matches('/'), remote_path);
-    
-    println!("[WebDAV] List directory request: {}", url);
     
     let response = client
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &url)
@@ -760,15 +750,12 @@ async fn webdav_list(client: &reqwest::Client, config: &WebDavConfig) -> Result<
         .map_err(|e| format!("Failed to list directory: {}", e))?;
     
     let status = response.status();
-    println!("[WebDAV] List directory response status: {}", status);
     
     if !status.is_success() && status.as_u16() != 207 {
         return Err(format!("Failed to list directory: HTTP {}", status));
     }
     
     let body = response.text().await.map_err(|e| format!("Failed to read response: {}", e))?;
-    println!("[WebDAV] Response length: {} bytes", body.len());
-    println!("[WebDAV] Response content: {}", &body[..body.len().min(500)]);
     
     // Extract href content using simple string matching
     let mut files = Vec::new();
@@ -783,7 +770,6 @@ async fn webdav_list(client: &reqwest::Client, config: &WebDavConfig) -> Result<
             let abs_start = search_pos + start_idx + start_pat.len();
             if let Some(end_idx) = body[abs_start..].find(end_pat) {
                 let href_content = &body[abs_start..abs_start + end_idx];
-                println!("[WebDAV] Found href: {}", href_content);
                 
                 // URL Decode
                 let decoded = urlencoding::decode(href_content).unwrap_or_else(|_| href_content.into());
@@ -791,7 +777,6 @@ async fn webdav_list(client: &reqwest::Client, config: &WebDavConfig) -> Result<
                 // Extract filename
                 if let Some(name) = decoded.rsplit('/').next() {
                     if name.ends_with(".json") && !name.is_empty() {
-                        println!("[WebDAV] Found file: {}", name);
                         if !files.contains(&name.to_string()) {
                             files.push(name.to_string());
                         }
@@ -804,7 +789,6 @@ async fn webdav_list(client: &reqwest::Client, config: &WebDavConfig) -> Result<
         }
     }
     
-    println!("[WebDAV] Found {} JSON files total", files.len());
     Ok(files)
 }
 
@@ -843,7 +827,7 @@ async fn webdav_sync_upload(config: WebDavConfig) -> Result<SyncResult, String> 
     
     // Ensure remote root exists
     if let Err(e) = webdav_ensure_dir(&client, &config).await {
-        println!("Creating root directory: {}", e);
+        result.errors.push(format!("root dir: {}", e));
     }
     
     // Create accounts subdirectory
@@ -855,7 +839,7 @@ async fn webdav_sync_upload(config: WebDavConfig) -> Result<SyncResult, String> 
         remote_path: accounts_remote_path,
     };
     if let Err(e) = webdav_ensure_dir(&client, &accounts_config).await {
-        println!("Creating accounts directory: {}", e);
+        result.errors.push(format!("accounts dir: {}", e));
     }
     
     // Read local files and upload to accounts/ subdirectory
@@ -1363,7 +1347,7 @@ async fn webdav_sync_codex_upload(config: WebDavConfig, sync_config: CodexSyncCo
     
     // Ensure remote root exists
     if let Err(e) = webdav_ensure_dir(&client, &config).await {
-        println!("Creating root directory: {}", e);
+        result.errors.push(format!("root dir: {}", e));
     }
     
     let base_path = config.remote_path.trim_end_matches('/');
@@ -1729,8 +1713,9 @@ const TOKEN_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 /// Refresh token for specified account
 #[tauri::command]
 async fn refresh_account_token(file_path: String) -> Result<String, String> {
+    let validated_path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
     // Read auth file
-    let content = fs::read_to_string(&file_path)
+    let content = fs::read_to_string(&validated_path)
         .map_err(|e| format!("Failed to read authentication file: {}", e))?;
     
     let auth: CodexAuthFile = serde_json::from_str(&content)
@@ -1746,9 +1731,6 @@ async fn refresh_account_token(file_path: String) -> Result<String, String> {
         scope: "openid profile email",
     };
     
-    println!("[Token Refresh] Starting Token refresh...");
-    println!("[Token Refresh] URL: {}", TOKEN_REFRESH_URL);
-    
     // Send refresh request
     let client = reqwest::Client::new();
     let response = client
@@ -1760,12 +1742,10 @@ async fn refresh_account_token(file_path: String) -> Result<String, String> {
         .map_err(|e| format!("Request failed: {}", e))?;
     
     let status = response.status();
-    println!("[Token Refresh] Response status: {}", status);
     
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        println!("[Token Refresh] Error response: {}", body);
-        
+
         // Parse error information
         if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&body) {
             if let Some(error) = error_json.get("error") {
@@ -1790,14 +1770,6 @@ async fn refresh_account_token(file_path: String) -> Result<String, String> {
     let refresh_response: TokenRefreshResponse = response.json().await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
     
-    println!("[Token Refresh] Refresh successful!");
-    println!("[Token Refresh] New access_token: {}...", 
-        refresh_response.access_token.as_ref().map(|t| &t[..20.min(t.len())]).unwrap_or("None"));
-    println!("[Token Refresh] New id_token: {}...", 
-        refresh_response.id_token.as_ref().map(|t| &t[..20.min(t.len())]).unwrap_or("None"));
-    println!("[Token Refresh] New refresh_token: {}...", 
-        refresh_response.refresh_token.as_ref().map(|t| &t[..20.min(t.len())]).unwrap_or("None"));
-    
     // Update auth file
     let mut updated_auth = auth.clone();
     
@@ -1818,10 +1790,8 @@ async fn refresh_account_token(file_path: String) -> Result<String, String> {
     let updated_content = serde_json::to_string_pretty(&updated_auth)
         .map_err(|e| format!("Failed to serialize: {}", e))?;
     
-    fs::write(&file_path, &updated_content)
+    fs::write(&validated_path, &updated_content)
         .map_err(|e| format!("Failed to write file: {}", e))?;
-    
-    println!("[Token Refresh] Updated authentication file: {}", file_path);
     
     Ok("Token refresh successful".to_string())
 }
@@ -1946,6 +1916,8 @@ pub fn run() {
             fetch_usage,
             rename_account,
             get_app_config,
+            get_webdav_password,
+            set_webdav_password,
             set_accounts_dir,
             add_account,
             delete_account,

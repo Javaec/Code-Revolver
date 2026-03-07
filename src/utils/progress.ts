@@ -57,11 +57,10 @@ export function getBgColorClass(state: ProgressColorState): string {
 /**
  * Format relative time (e.g., "in 2h 15m" or "in 3d")
  */
-export function formatRelativeTime(timestamp: number | null | undefined): string {
+export function formatRelativeTime(timestamp: number | null | undefined, nowMs = Date.now()): string {
   if (!timestamp) return '';
-  
-  const now = Date.now();
-  const diffMs = (timestamp * 1000) - now; // resets_at is usually in seconds
+
+  const diffMs = (timestamp * 1000) - nowMs; // resets_at is usually in seconds
   
   if (diffMs <= 0) return 'Resetting...';
   

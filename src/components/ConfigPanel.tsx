@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
 import { Button, Card } from './ui';
+import { showError } from '../lib/dialogs';
 
 interface ConfigPanelProps {
   onBack: () => void;
@@ -39,7 +40,7 @@ export function ConfigPanel({ onBack }: ConfigPanelProps) {
       setIsEditing(false);
     } catch (error) {
       console.error('Save failed:', error);
-      alert(String(error));
+      await showError(error, 'Save config.toml');
     } finally {
       setSaving(false);
     }

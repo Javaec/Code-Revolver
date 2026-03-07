@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button, Card } from './ui';
+import { showError } from '../lib/dialogs';
 
 interface AgentsPanelProps {
   onBack: () => void;
@@ -41,7 +42,7 @@ export function AgentsPanel({ onBack }: AgentsPanelProps) {
       setIsEditing(false);
     } catch (error) {
       console.error('Save failed:', error);
-      alert(String(error));
+      await showError(error, 'Save AGENTS.MD');
     } finally {
       setSaving(false);
     }

@@ -1,40 +1,47 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { invoke } from '@tauri-apps/api/core';
 import { AccountInfo, MutationResult } from '../types';
 import { Badge, Button, Card, Input, LinearProgress } from './ui';
 import { getAccountCardVariant, getPlanBadgeClasses } from '../utils/account';
 import { formatRelativeTime } from '../utils/progress';
+import { confirmAction, showError, showInfo } from '../lib/dialogs';
 
 interface AccountCardProps {
   account: AccountInfo;
-  onSwitch: () => void;
+  onSwitch: () => Promise<MutationResult>;
   onEdit: () => void;
   onEditPool?: () => void;
-  onDelete?: () => void;
+  onDelete?: () => Promise<MutationResult>;
+  onRefreshToken: () => Promise<MutationResult>;
   isBestCandidate?: boolean;
   isPrivacyMode?: boolean;
   isUsageLoading?: boolean;
+  isMutationLocked?: boolean;
+  activeMutationKind?: 'switch' | 'rename' | 'delete' | 'refresh-token' | null;
+  clockTickMs: number;
   renameAccount: (oldPath: string, newName: string) => Promise<MutationResult>;
-  onRefresh?: () => void;
 }
 
-export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, isBestCandidate, isPrivacyMode, isUsageLoading, renameAccount, onRefresh }: AccountCardProps) {
+export function AccountCard({
+  account,
+  onSwitch,
+  onEdit,
+  onEditPool,
+  onDelete,
+  onRefreshToken,
+  isBestCandidate,
+  isPrivacyMode,
+  isUsageLoading,
+  isMutationLocked,
+  activeMutationKind,
+  clockTickMs,
+  renameAccount,
+}: AccountCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(account.name);
-  const [, setTick] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => {
-    setNewName(account.name);
-  }, [account.name]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setTick(t => t + 1), 60000);
-    return () => clearInterval(timer);
-  }, []);
 
   const isTokenExpired = account.isTokenExpired;
+  const isRefreshingToken = activeMutationKind === 'refresh-token';
   const cardVariant = getAccountCardVariant(account.isActive, !!isTokenExpired);
   const planBadge = getPlanBadgeClasses(account.planType);
   const cardClasses = cardVariant === 'danger'
@@ -83,11 +90,12 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
   const authUpdatedAtMs = account.authUpdatedAt;
   const expireAtMs = authUpdatedAtMs + EXPIRE_WINDOW_MS;
   const expireAtSec = Math.floor(expireAtMs / 1000);
-  const expireElapsed = Math.max(0, Date.now() - authUpdatedAtMs);
+  const expireElapsed = Math.max(0, clockTickMs - authUpdatedAtMs);
   const expirePercent = Math.min(100, Math.max(0, (expireElapsed / EXPIRE_WINDOW_MS) * 100));
   const needsRelogin = expirePercent >= 95;
 
   const handleRename = async () => {
+    if (isMutationLocked) return;
     if (newName.trim() && newName !== account.name) {
       try {
         await renameAccount(account.filePath, newName.trim());
@@ -113,17 +121,32 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
   };
 
   const handleRefreshToken = async () => {
-    setRefreshing(true);
-    try {
-      const result = await invoke<string>('refresh_account_token', { filePath: account.filePath });
-      console.log('Token refresh result:', result);
-      alert(result);
-      onRefresh?.();
-    } catch (error) {
-      console.error('Token refresh failed:', error);
-      alert(`Refresh failed: ${error}`);
-    } finally {
-      setRefreshing(false);
+    const result = await onRefreshToken();
+    if (result.success) {
+      if (result.message) {
+        await showInfo(result.message, 'Token Refresh');
+      }
+      return;
+    }
+
+    if (result.message) {
+      await showError(`Refresh failed: ${result.message}`, 'Token Refresh');
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!onDelete) return;
+    if (!await confirmAction(`Delete account "${account.name}"?`, 'Delete Account')) return;
+    const result = await onDelete();
+    if (!result.success && result.message) {
+      await showError(result.message, 'Delete Account');
+    }
+  };
+
+  const handleSwitch = async () => {
+    const result = await onSwitch();
+    if (!result.success && result.message) {
+      await showError(result.message, 'Switch Account');
     }
   };
 
@@ -134,7 +157,9 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
         if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) {
           return;
         }
-        onEdit();
+        if (!isMutationLocked) {
+          onEdit();
+        }
       }}
     >
       {/* Header Row: Name + Badges */}
@@ -162,7 +187,13 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
         ) : (
           <div
             className="flex items-center gap-1.5 group/title cursor-pointer"
-            onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isMutationLocked) {
+                setNewName(account.name);
+                setIsEditing(true);
+              }
+            }}
           >
             <h3 className={`font-bold text-[15px] text-white truncate max-w-[112px] transition-all ${isPrivacyMode ? 'blur-md select-none' : ''}`} title={account.name}>
               {account.name}
@@ -180,11 +211,18 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
 
         {!isEditing && (
           <Button
-            onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isMutationLocked) {
+                setNewName(account.name);
+                setIsEditing(true);
+              }
+            }}
             variant="ghost"
             size="icon"
             className="h-5 w-5 text-slate-500 hover:text-white"
             title="Rename Profile"
+            disabled={isMutationLocked}
           >
             <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -256,7 +294,7 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
             <LinearProgress
               value={expirePercent}
               label="Expire"
-              subLabel={formatRelativeTime(expireAtSec)}
+              subLabel={formatRelativeTime(expireAtSec, clockTickMs)}
             />
           </div>
           {needsRelogin && (
@@ -272,12 +310,12 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
             <LinearProgress
               value={account.usage?.primaryWindow?.usedPercent ?? 0}
               label="5H Limit"
-              subLabel={formatRelativeTime(account.usage?.primaryWindow?.resetsAt)}
+              subLabel={formatRelativeTime(account.usage?.primaryWindow?.resetsAt, clockTickMs)}
             />
             <LinearProgress
               value={account.usage?.secondaryWindow?.usedPercent ?? 0}
               label="Weekly"
-              subLabel={formatRelativeTime(account.usage?.secondaryWindow?.resetsAt)}
+              subLabel={formatRelativeTime(account.usage?.secondaryWindow?.resetsAt, clockTickMs)}
             />
           </div>
 
@@ -287,15 +325,17 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
             <Button
               onClick={(e) => {
                 e.stopPropagation();
-                handleRefreshToken();
+                if (!isMutationLocked) {
+                  void handleRefreshToken();
+                }
               }}
-              disabled={refreshing}
+              disabled={isMutationLocked}
               title="Refresh Token"
               variant="outline"
               size="icon"
               className="h-7 w-7"
             >
-              {refreshing ? (
+              {isRefreshingToken ? (
                 <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -310,14 +350,15 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
             <Button
               onClick={(e) => {
                 e.stopPropagation();
-                if (confirm(`Are you sure you want to delete account "${account.name}"?`)) {
-                  onDelete?.();
+                if (!isMutationLocked) {
+                  void handleDelete();
                 }
               }}
               title="Delete Account"
               variant="outline"
               size="icon"
               className="h-7 w-7 border-rose-300/25 bg-rose-300/10 text-rose-200 hover:bg-rose-300/20"
+              disabled={isMutationLocked}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -329,9 +370,11 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
             <Button
               onClick={(e) => {
                 e.stopPropagation();
-                onSwitch();
+                if (!isMutationLocked) {
+                  void handleSwitch();
+                }
               }}
-              disabled={!!isTokenExpired}
+              disabled={!!isTokenExpired || isMutationLocked}
               title="Switch to this account"
               size="icon"
               className="h-9 w-9 bg-primary-500/25 text-primary-200 hover:bg-primary-500/40 border border-primary-400/30"
@@ -346,12 +389,15 @@ export function AccountCard({ account, onSwitch, onEdit, onEditPool, onDelete, i
             <Button
               onClick={(e) => {
                 e.stopPropagation();
-                onEditPool();
+                if (!isMutationLocked) {
+                  onEditPool();
+                }
               }}
               variant="outline"
               size="sm"
               className="h-6 px-2 text-[10px] border-cyan-500/25 text-cyan-300 hover:bg-cyan-500/10"
               title="Configure switch priority"
+              disabled={isMutationLocked}
             >
               Priority {account.pool?.priority ?? 5}
             </Button>

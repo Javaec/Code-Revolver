@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AppSettings, DEFAULT_SETTINGS, DEFAULT_SYNC_SETTINGS } from '../types';
-import { useAccounts } from '../hooks/useAccounts';
+import { AppSettings, DEFAULT_SETTINGS, DEFAULT_SYNC_SETTINGS, MutationResult } from '../types';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { Button, Card, Input } from './ui';
+import { buildWebDavRequestConfig, hasWebDavCredentials, validateWebDavConfig } from '../lib/webdav';
 
 interface SettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   settings: AppSettings;
+  accountsDir: string;
+  onSetAccountsDir: (path: string) => Promise<MutationResult>;
   onUpdateSettings: (settings: Partial<AppSettings>) => void;
 }
 
@@ -26,8 +28,7 @@ const dialogVariants = {
 
 type SettingsTab = 'general' | 'sync';
 
-export function SettingsDialog({ isOpen, onClose, settings, onUpdateSettings }: SettingsDialogProps) {
-  const { getAccountsDir, setAccountsDir } = useAccounts();
+export function SettingsDialog({ isOpen, onClose, settings, accountsDir, onSetAccountsDir, onUpdateSettings }: SettingsDialogProps) {
   const [localDir, setLocalDir] = useState<string>('');
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [webdavTesting, setWebdavTesting] = useState(false);
@@ -39,13 +40,13 @@ export function SettingsDialog({ isOpen, onClose, settings, onUpdateSettings }: 
 
   useEffect(() => {
     if (isOpen) {
-      getAccountsDir().then(setLocalDir);
+      setLocalDir(accountsDir);
       setWebdavMessage(null);
     }
-  }, [isOpen, getAccountsDir]);
+  }, [isOpen, accountsDir]);
 
   const handleSaveDir = async () => {
-    if (localDir) await setAccountsDir(localDir);
+    if (localDir) await onSetAccountsDir(localDir);
   };
 
   const handleBrowseDir = async () => {
@@ -57,7 +58,7 @@ export function SettingsDialog({ isOpen, onClose, settings, onUpdateSettings }: 
     });
     if (selected && typeof selected === 'string') {
       setLocalDir(selected);
-      await setAccountsDir(selected);
+      await onSetAccountsDir(selected);
     }
   };
 
@@ -74,16 +75,17 @@ export function SettingsDialog({ isOpen, onClose, settings, onUpdateSettings }: 
   };
 
   const handleTestConnection = async () => {
+    const validationError = validateWebDavConfig(webdav);
+    if (validationError) {
+      setWebdavMessage({ type: 'error', text: validationError });
+      return;
+    }
+
     setWebdavTesting(true);
     setWebdavMessage(null);
     try {
       const result = await invoke<string>('webdav_test_connection', {
-        config: {
-          url: webdav.url,
-          username: webdav.username,
-          password: webdav.password,
-          remotePath: webdav.remotePath,
-        },
+        config: buildWebDavRequestConfig(webdav),
       });
       setWebdavMessage({ type: 'success', text: result });
     } catch (e: unknown) {
@@ -378,7 +380,7 @@ export function SettingsDialog({ isOpen, onClose, settings, onUpdateSettings }: 
                         variant="outline"
                         size="sm"
                         onClick={handleTestConnection}
-                        disabled={webdavTesting || !webdav.username || !webdav.password}
+                        disabled={webdavTesting || !hasWebDavCredentials(webdav)}
                       >
                         {webdavTesting ? 'Testing...' : 'Test Connection'}
                       </Button>

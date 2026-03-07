@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     AccountInfo,
     ScanResult,
@@ -7,11 +7,15 @@ import {
     DEFAULT_SETTINGS,
     MutationResult,
     AccountPoolMetadata,
-    DEFAULT_ACCOUNT_POOL_METADATA,
-    GatewaySettings,
-    DEFAULT_GATEWAY_SETTINGS,
 } from '../types';
 import { invoke } from '@tauri-apps/api/core';
+import {
+    calculateSwitchScore,
+    normalizePoolMetadata,
+    normalizeSettings,
+    sortAccountsByWeeklyRule,
+} from './useAccountsModel';
+import { useIntervalTask } from './useIntervalTask';
 
 const SETTINGS_STORAGE_KEY = 'code_revolver_settings';
 const USAGE_CACHE_KEY = 'code_revolver_usage_cache';
@@ -20,6 +24,8 @@ type UsageCacheEntry = {
     usage: UsageInfo;
     cachedAt: number;
 };
+
+type AccountMutationKind = 'switch' | 'rename' | 'delete' | 'refresh-token';
 
 function loadUsageCache(): Record<string, UsageCacheEntry> {
     try {
@@ -35,110 +41,16 @@ function saveUsageCache(cache: Record<string, UsageCacheEntry>): void {
     localStorage.setItem(USAGE_CACHE_KEY, JSON.stringify(cache));
 }
 
-function normalizePoolMetadata(metadata?: unknown): AccountPoolMetadata {
-    const source = typeof metadata === 'object' && metadata !== null
-        ? metadata as Partial<AccountPoolMetadata>
-        : {};
-    const numericPriority = Number(
-        typeof metadata === 'number'
-            ? metadata
-            : source.priority ?? DEFAULT_ACCOUNT_POOL_METADATA.priority
-    );
-    const safePriority = Number.isFinite(numericPriority)
-        ? Math.max(1, Math.min(10, Math.round(numericPriority)))
-        : DEFAULT_ACCOUNT_POOL_METADATA.priority;
-
-    return {
-        priority: safePriority,
+function persistSettings(settings: AppSettings): void {
+    const persistedSettings = {
+        ...settings,
+        webdav: settings.webdav ? {
+            ...settings.webdav,
+            password: '',
+            hasStoredPassword: settings.webdav.hasStoredPassword ?? Boolean(settings.webdav.password),
+        } : settings.webdav,
     };
-}
-
-function normalizeGatewaySettings(gateway?: Partial<GatewaySettings>): GatewaySettings {
-    const keepAliveIntervalSec = Number(gateway?.keepAliveIntervalSec ?? DEFAULT_GATEWAY_SETTINGS.keepAliveIntervalSec);
-    const safeKeepAlive = Number.isFinite(keepAliveIntervalSec)
-        ? Math.max(15, Math.min(3600, Math.round(keepAliveIntervalSec)))
-        : DEFAULT_GATEWAY_SETTINGS.keepAliveIntervalSec;
-
-    return {
-        ...DEFAULT_GATEWAY_SETTINGS,
-        ...gateway,
-        endpoint: gateway?.endpoint?.trim() || DEFAULT_GATEWAY_SETTINGS.endpoint,
-        oauthCallbackUrl: gateway?.oauthCallbackUrl?.trim() || DEFAULT_GATEWAY_SETTINGS.oauthCallbackUrl,
-        keepAliveIntervalSec: safeKeepAlive,
-    };
-}
-
-function normalizeSettings(candidate?: Partial<AppSettings>): AppSettings {
-    const normalizedPool: Record<string, AccountPoolMetadata> = {};
-    const poolSource = candidate?.accountPool || {};
-    Object.entries(poolSource).forEach(([key, value]) => {
-        normalizedPool[key] = normalizePoolMetadata(value);
-    });
-
-    return {
-        ...DEFAULT_SETTINGS,
-        ...candidate,
-        accountPool: normalizedPool,
-        gateway: normalizeGatewaySettings(candidate?.gateway),
-        webdav: { ...DEFAULT_SETTINGS.webdav!, ...candidate?.webdav },
-        sync: { ...DEFAULT_SETTINGS.sync!, ...candidate?.sync },
-    };
-}
-
-function calculateSwitchScore(account: AccountInfo): number {
-    const priority = account.pool?.priority ?? DEFAULT_ACCOUNT_POOL_METADATA.priority;
-    const primaryUsage = account.usage?.primaryWindow?.usedPercent ?? 100;
-    const weeklyUsage = account.usage?.secondaryWindow?.usedPercent ?? 100;
-    const usageScore = 200 - primaryUsage - weeklyUsage;
-    const weeklyResetAt = account.usage?.secondaryWindow?.resetsAt ?? Number.MAX_SAFE_INTEGER;
-    const resetPenalty = weeklyResetAt === Number.MAX_SAFE_INTEGER
-        ? 10_000
-        : Math.max(0, weeklyResetAt - Date.now()) / (1000 * 60 * 60);
-
-    return priority * 1000 + usageScore * 5 - resetPenalty;
-}
-
-function getWeeklyUsagePercent(account: AccountInfo): number {
-    return account.usage?.secondaryWindow?.usedPercent ?? 100;
-}
-
-function getWeeklyResetEtaMs(account: AccountInfo, nowMs: number): number {
-    const resetsAt = account.usage?.secondaryWindow?.resetsAt;
-    if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) {
-        return Number.MAX_SAFE_INTEGER;
-    }
-
-    // Backend provides reset timestamp in Unix seconds in most cases.
-    const resetAtMs = resetsAt < 10_000_000_000 ? resetsAt * 1000 : resetsAt;
-    return Math.max(0, resetAtMs - nowMs);
-}
-
-function getWeeklyGroupOrder(account: AccountInfo): number {
-    const weekly = getWeeklyUsagePercent(account);
-    return weekly > 90 ? 1 : 0;
-}
-
-function compareAccountsByWeeklyReset(a: AccountInfo, b: AccountInfo, nowMs: number): number {
-    const groupDiff = getWeeklyGroupOrder(a) - getWeeklyGroupOrder(b);
-    if (groupDiff !== 0) return groupDiff;
-
-    const groupOrder = getWeeklyGroupOrder(a);
-    if (groupOrder === 0) {
-        // Upper group (Weekly <= 90): sort by smaller weekly percent first.
-        const weeklyDiff = getWeeklyUsagePercent(a) - getWeeklyUsagePercent(b);
-        if (weeklyDiff !== 0) return weeklyDiff;
-    } else {
-        // Lower group (Weekly > 90): sort by earlier weekly reset (days/hours) first.
-        const etaDiff = getWeeklyResetEtaMs(a, nowMs) - getWeeklyResetEtaMs(b, nowMs);
-        if (etaDiff !== 0) return etaDiff;
-    }
-
-    return a.name.localeCompare(b.name, 'en-US');
-}
-
-function sortAccountsByWeeklyRule(accounts: AccountInfo[]): AccountInfo[] {
-    const nowMs = Date.now();
-    return [...accounts].sort((a, b) => compareAccountsByWeeklyReset(a, b, nowMs));
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(persistedSettings));
 }
 
 export function useAccounts() {
@@ -146,6 +58,12 @@ export function useAccounts() {
     const [accountsDir, setAccountsDirState] = useState<string>('');
     const [loading, setLoading] = useState(true);
     const [usageLoadingByPath, setUsageLoadingByPath] = useState<Record<string, boolean>>({});
+    const [activeAccountMutation, setActiveAccountMutation] = useState<{ filePath: string; kind: AccountMutationKind } | null>(null);
+    const refreshInFlightRef = useRef<Promise<void> | null>(null);
+    const refreshQueuedRef = useRef(false);
+    const refreshRunIdRef = useRef(0);
+    const autoSwitchInFlightRef = useRef(false);
+    const accountMutationInFlightRef = useRef(false);
 
     const [settings, setSettings] = useState<AppSettings>(() => {
         try {
@@ -156,8 +74,70 @@ export function useAccounts() {
             return normalizeSettings(DEFAULT_SETTINGS);
         }
     });
+    const settingsRef = useRef(settings);
+
+    useEffect(() => {
+        settingsRef.current = settings;
+    }, [settings]);
+
+    useEffect(() => {
+        const hydrateWebDavPassword = async () => {
+            const legacyPassword = settingsRef.current.webdav?.password?.trim();
+            if (legacyPassword) {
+                try {
+                    await invoke('set_webdav_password', { password: legacyPassword });
+                } catch (error) {
+                    console.error('Failed to migrate WebDAV password to secure storage:', error);
+                }
+
+                setSettings((prev) => {
+                    const next = normalizeSettings({
+                        ...prev,
+                        webdav: {
+                            ...(prev.webdav || DEFAULT_SETTINGS.webdav!),
+                            password: legacyPassword,
+                            hasStoredPassword: true,
+                        },
+                    });
+                    persistSettings(next);
+                    return next;
+                });
+                return;
+            }
+
+            try {
+                const storedPassword = await invoke<string | null>('get_webdav_password');
+                setSettings((prev) => {
+                    const next = normalizeSettings({
+                        ...prev,
+                        webdav: {
+                            ...(prev.webdav || DEFAULT_SETTINGS.webdav!),
+                            password: storedPassword ?? '',
+                            hasStoredPassword: Boolean(storedPassword),
+                        },
+                    });
+                    persistSettings(next);
+                    return next;
+                });
+            } catch (error) {
+                console.error('Failed to load WebDAV password from secure storage:', error);
+            }
+        };
+
+        void hydrateWebDavPassword();
+    }, []);
 
     const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
+        const nextPassword = newSettings.webdav && Object.prototype.hasOwnProperty.call(newSettings.webdav, 'password')
+            ? newSettings.webdav.password ?? ''
+            : undefined;
+
+        if (nextPassword !== undefined) {
+            void invoke('set_webdav_password', { password: nextPassword }).catch((error) => {
+                console.error('Failed to persist WebDAV password in secure storage:', error);
+            });
+        }
+
         setSettings(prev => {
             const mergedPool = newSettings.accountPool
                 ? { ...prev.accountPool, ...newSettings.accountPool }
@@ -166,7 +146,13 @@ export function useAccounts() {
                 ? { ...prev.gateway, ...newSettings.gateway }
                 : prev.gateway;
             const mergedWebDav = newSettings.webdav
-                ? { ...(prev.webdav || DEFAULT_SETTINGS.webdav!), ...newSettings.webdav }
+                ? {
+                    ...(prev.webdav || DEFAULT_SETTINGS.webdav!),
+                    ...newSettings.webdav,
+                    hasStoredPassword: nextPassword !== undefined
+                        ? nextPassword.trim().length > 0
+                        : newSettings.webdav.hasStoredPassword ?? prev.webdav?.hasStoredPassword ?? false,
+                }
                 : prev.webdav;
             const mergedSync = newSettings.sync
                 ? { ...(prev.sync || DEFAULT_SETTINGS.sync!), ...newSettings.sync }
@@ -181,7 +167,7 @@ export function useAccounts() {
                 sync: mergedSync,
             });
 
-            localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next));
+            persistSettings(next);
             return next;
         });
     }, []);
@@ -190,109 +176,166 @@ export function useAccounts() {
         return await invoke<UsageInfo>('fetch_usage', { filePath });
     }, []);
 
-    const refresh = useCallback(async () => {
-        setLoading(true);
+    const withAccountMutationLock = useCallback(async <T,>(
+        filePath: string,
+        kind: AccountMutationKind,
+        task: () => Promise<T>,
+    ): Promise<T> => {
+        if (accountMutationInFlightRef.current) {
+            throw new Error('Another account action is already running');
+        }
+
+        accountMutationInFlightRef.current = true;
+        setActiveAccountMutation({ filePath, kind });
+
         try {
-            const result = await invoke<ScanResult>('scan_accounts');
+            return await task();
+        } finally {
+            accountMutationInFlightRef.current = false;
+            setActiveAccountMutation(null);
+        }
+    }, []);
 
-            setAccountsDirState(result.accountsDir);
-            const usageCache = loadUsageCache();
+    const refresh = useCallback(async () => {
+        if (refreshInFlightRef.current) {
+            refreshQueuedRef.current = true;
+            return refreshInFlightRef.current;
+        }
 
-            const migratedPoolEntries: Record<string, AccountPoolMetadata> = {};
-            const baseAccounts = result.accounts.map((account) => {
-                const rawPoolMetadata = settings.accountPool[account.id] || settings.accountPool[account.filePath];
-                const pool = normalizePoolMetadata(rawPoolMetadata);
+        const refreshPromise = (async () => {
+            const refreshRunId = ++refreshRunIdRef.current;
+            setLoading(true);
 
-                if (!settings.accountPool[account.id] && settings.accountPool[account.filePath]) {
-                    migratedPoolEntries[account.id] = pool;
+            try {
+                const result = await invoke<ScanResult>('scan_accounts');
+                const usageCache = loadUsageCache();
+                const accountPool = settingsRef.current.accountPool;
+                const usageUpdatesByPath: Record<string, {
+                    usage?: UsageInfo;
+                    cachedAt: number;
+                    isTokenExpired: boolean;
+                }> = {};
+                let usageCacheChanged = false;
+
+                setAccountsDirState(result.accountsDir);
+
+                const migratedPoolEntries: Record<string, AccountPoolMetadata> = {};
+                const baseAccounts = result.accounts.map((account) => {
+                    const rawPoolMetadata = accountPool[account.id] || accountPool[account.filePath];
+                    const pool = normalizePoolMetadata(rawPoolMetadata);
+
+                    if (!accountPool[account.id] && accountPool[account.filePath]) {
+                        migratedPoolEntries[account.id] = pool;
+                    }
+
+                    const cached = usageCache[account.filePath];
+                    return {
+                        ...account,
+                        usage: cached?.usage,
+                        lastUsageUpdate: cached?.cachedAt ?? Date.now(),
+                        isTokenExpired: false,
+                        pool,
+                    };
+                });
+
+                if (Object.keys(migratedPoolEntries).length > 0) {
+                    updateSettings({ accountPool: migratedPoolEntries });
+                }
+                setAccounts(sortAccountsByWeeklyRule(baseAccounts));
+
+                const loadingMap = Object.fromEntries(
+                    baseAccounts.map((account) => [account.filePath, true]),
+                ) as Record<string, boolean>;
+                setUsageLoadingByPath(loadingMap);
+
+                await Promise.allSettled(baseAccounts.map(async (account) => {
+                    try {
+                        const usage = await fetchUsage(account.filePath);
+                        const cachedAt = Date.now();
+                        usageCache[account.filePath] = {
+                            usage,
+                            cachedAt,
+                        };
+                        usageCacheChanged = true;
+                        usageUpdatesByPath[account.filePath] = {
+                            usage,
+                            cachedAt,
+                            isTokenExpired: false,
+                        };
+                    } catch (error: unknown) {
+                        const errStr = String(error);
+                        const isExpired = errStr.includes('401')
+                            || errStr.includes('403')
+                            || errStr.includes('Status: 401')
+                            || errStr.includes('Status: 403');
+                        const cached = usageCache[account.filePath];
+                        usageUpdatesByPath[account.filePath] = {
+                            usage: cached?.usage,
+                            cachedAt: cached?.cachedAt ?? Date.now(),
+                            isTokenExpired: isExpired,
+                        };
+                    } finally {
+                        setUsageLoadingByPath((prev) => ({ ...prev, [account.filePath]: false }));
+                    }
+                }));
+
+                if (usageCacheChanged) {
+                    saveUsageCache(usageCache);
                 }
 
-                const cached = usageCache[account.filePath];
-                return {
-                    ...account,
-                    usage: cached?.usage,
-                    lastUsageUpdate: cached?.cachedAt ?? Date.now(),
-                    isTokenExpired: false,
-                    pool,
-                };
-            });
+                const nextAccounts = baseAccounts.map((account) => {
+                    const usageUpdate = usageUpdatesByPath[account.filePath];
+                    if (!usageUpdate) return account;
+                    return {
+                        ...account,
+                        usage: usageUpdate.usage,
+                        lastUsageUpdate: usageUpdate.cachedAt,
+                        isTokenExpired: usageUpdate.isTokenExpired,
+                    };
+                });
+                setAccounts(sortAccountsByWeeklyRule(nextAccounts));
+            } catch (error) {
+                console.error('Failed to scan accounts:', error);
+            } finally {
+                if (refreshRunId === refreshRunIdRef.current) {
+                    setLoading(false);
+                }
+                refreshInFlightRef.current = null;
 
-            const hasPoolMigration = Object.keys(migratedPoolEntries).length > 0;
-            if (hasPoolMigration) {
-                updateSettings({ accountPool: migratedPoolEntries });
+                if (refreshQueuedRef.current) {
+                    refreshQueuedRef.current = false;
+                    void refresh();
+                }
             }
-            saveUsageCache(usageCache);
+        })();
 
-            setAccounts(sortAccountsByWeeklyRule(baseAccounts));
-
-            const loadingMap: Record<string, boolean> = {};
-            baseAccounts.forEach(acc => {
-                loadingMap[acc.filePath] = true;
-            });
-            setUsageLoadingByPath(loadingMap);
-
-            baseAccounts.forEach(acc => {
-                fetchUsage(acc.filePath)
-                    .then((usage) => {
-                        usageCache[acc.filePath] = {
-                            usage,
-                            cachedAt: Date.now(),
-                        };
-                        saveUsageCache(usageCache);
-                        setAccounts(prev => {
-                            const next = prev.map(item => (
-                                item.filePath === acc.filePath
-                                    ? { ...item, usage, lastUsageUpdate: Date.now(), isTokenExpired: false }
-                                    : item
-                            ));
-                            return sortAccountsByWeeklyRule(next);
-                        });
-                    })
-                    .catch((error: unknown) => {
-                        const errStr = String(error);
-                        const isExpired = errStr.includes('401') || errStr.includes('403') || errStr.includes('Status: 401') || errStr.includes('Status: 403');
-                        const cached = usageCache[acc.filePath];
-                        setAccounts(prev => {
-                            const next = prev.map(item => (
-                                item.filePath === acc.filePath
-                                    ? { ...item, usage: cached?.usage, lastUsageUpdate: cached?.cachedAt ?? Date.now(), isTokenExpired: isExpired }
-                                    : item
-                            ));
-                            return sortAccountsByWeeklyRule(next);
-                        });
-                    })
-                    .finally(() => {
-                        setUsageLoadingByPath(prev => ({ ...prev, [acc.filePath]: false }));
-                    });
-            });
-
-        } catch (error) {
-            console.error('Failed to scan accounts:', error);
-        } finally {
-            setLoading(false);
-        }
-    }, [fetchUsage, settings.accountPool, updateSettings]);
+        refreshInFlightRef.current = refreshPromise;
+        return refreshPromise;
+    }, [fetchUsage, updateSettings]);
 
     const switchAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
         try {
-            await invoke('switch_account', { filePath });
+            await withAccountMutationLock(filePath, 'switch', async () => {
+                await invoke('switch_account', { filePath });
 
-            // Optimistic update: mark new account active locally to avoid waiting for full refresh
-            setAccounts(prev => prev.map(acc => {
-                if (acc.filePath === filePath) return { ...acc, isActive: true };
-                if (acc.isActive) return { ...acc, isActive: false };
-                return acc;
-            }));
+                // Optimistic update: mark new account active locally to avoid waiting for full refresh
+                setAccounts(prev => prev.map(acc => {
+                    if (acc.filePath === filePath) return { ...acc, isActive: true };
+                    if (acc.isActive) return { ...acc, isActive: false };
+                    return acc;
+                }));
 
-            await refresh(); // Refresh status
+                await refresh();
+            });
             return { success: true, message: 'Account switched' };
         } catch (error: unknown) {
             return { success: false, message: String(error) };
         }
-    }, [refresh]);
+    }, [refresh, withAccountMutationLock]);
 
     const checkAutoSwitch = useCallback(async (currentAccounts: AccountInfo[]) => {
         if (!settings.enableAutoSwitch) return;
+        if (autoSwitchInFlightRef.current) return;
 
         const activeAccount = currentAccounts.find(a => a.isActive);
         if (!activeAccount) return;
@@ -321,8 +364,12 @@ export function useAccounts() {
             candidates.sort((a, b) => calculateSwitchScore(b) - calculateSwitchScore(a));
 
             const bestAccount = candidates[0];
-            // Perform switch
-            await switchAccount(bestAccount.filePath);
+            autoSwitchInFlightRef.current = true;
+            try {
+                await switchAccount(bestAccount.filePath);
+            } finally {
+                autoSwitchInFlightRef.current = false;
+            }
         }
     }, [settings.enableAutoSwitch, settings.autoSwitchThreshold, switchAccount]);
 
@@ -370,55 +417,45 @@ export function useAccounts() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    useEffect(() => {
-        if (!settings.autoCheck || settings.checkInterval <= 0) return;
-        const intervalId = setInterval(() => {
-            refresh();
-        }, settings.checkInterval * 60 * 1000);
-        return () => clearInterval(intervalId);
-    }, [settings.autoCheck, settings.checkInterval, refresh]);
+    useIntervalTask(settings.autoCheck, settings.checkInterval * 60 * 1000, () => {
+        void refresh();
+    });
 
     useEffect(() => {
         if (!settings.enableAutoSwitch) return;
         if (accounts.length === 0) return;
-        checkAutoSwitch(accounts);
-    }, [accounts, settings.enableAutoSwitch, checkAutoSwitch]);
+        if (loading) return;
+        void checkAutoSwitch(accounts);
+    }, [accounts, loading, settings.enableAutoSwitch, checkAutoSwitch]);
 
     const renameAccount = useCallback(async (oldPath: string, newName: string): Promise<MutationResult> => {
         // Find the account ID first to ensure we update the right one reliably
         const targetAccount = accounts.find(a => a.filePath === oldPath);
         const targetId = targetAccount?.id;
 
-        if (targetId) {
-            // 1. Optimistic Update (Immediate UI Feedback via ID)
-            setAccounts(prevAccounts => prevAccounts.map(acc => {
-                if (acc.id === targetId) {
-                    return { ...acc, name: newName };
-                }
-                return acc;
-            }));
-        } else {
-            // Fallback to path if ID not found (shouldn't happen)
-            setAccounts(prevAccounts => prevAccounts.map(acc => {
-                if (acc.filePath === oldPath) {
-                    return { ...acc, name: newName };
-                }
-                return acc;
-            }));
-        }
-
         try {
-            await invoke('rename_account', { oldPath, newName });
-            // Add a delay to ensure FS operation is seen by scan
-            await new Promise(resolve => setTimeout(resolve, 500));
-            await refresh();
+            await withAccountMutationLock(oldPath, 'rename', async () => {
+                if (targetId) {
+                    setAccounts(prevAccounts => prevAccounts.map(acc => (
+                        acc.id === targetId ? { ...acc, name: newName } : acc
+                    )));
+                } else {
+                    setAccounts(prevAccounts => prevAccounts.map(acc => (
+                        acc.filePath === oldPath ? { ...acc, name: newName } : acc
+                    )));
+                }
+
+                await invoke('rename_account', { oldPath, newName });
+                await new Promise(resolve => setTimeout(resolve, 500));
+                await refresh();
+            });
             return { success: true };
         } catch (error: unknown) {
             console.error("Rename failed:", error);
             await refresh(); // Force sync
             return { success: false, message: String(error) };
         }
-    }, [accounts, refresh]); // Added accounts dependency
+    }, [accounts, refresh, withAccountMutationLock]);
 
     const setAccountsDir = useCallback(async (path: string): Promise<MutationResult> => {
         try {
@@ -445,15 +482,29 @@ export function useAccounts() {
 
     const deleteAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
         try {
-            await invoke('delete_account', { filePath });
-            // Add a small delay
-            await new Promise(resolve => setTimeout(resolve, 500));
-            await refresh();
+            await withAccountMutationLock(filePath, 'delete', async () => {
+                await invoke('delete_account', { filePath });
+                await new Promise(resolve => setTimeout(resolve, 500));
+                await refresh();
+            });
             return { success: true };
         } catch (error: unknown) {
             return { success: false, message: String(error) };
         }
-    }, [refresh]);
+    }, [refresh, withAccountMutationLock]);
+
+    const refreshAccountToken = useCallback(async (filePath: string): Promise<MutationResult> => {
+        try {
+            const message = await withAccountMutationLock(filePath, 'refresh-token', async () => {
+                const result = await invoke<string>('refresh_account_token', { filePath });
+                await refresh();
+                return result;
+            });
+            return { success: true, message };
+        } catch (error: unknown) {
+            return { success: false, message: String(error) };
+        }
+    }, [refresh, withAccountMutationLock]);
 
     const getAccountsDir = useCallback(async () => {
         try {
@@ -483,10 +534,12 @@ export function useAccounts() {
         accountsDir,
         loading,
         usageLoadingByPath,
+        activeAccountMutation,
         settings,
         updateSettings,
         refresh,
         switchAccount,
+        refreshAccountToken,
         renameAccount,
         setAccountsDir,
         addAccount,
