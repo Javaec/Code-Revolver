@@ -12,6 +12,7 @@ import {
     getRankedSwitchCandidates,
     isUsageAtOrAboveLimit,
     isUsageFresh,
+    normalizeSingleActiveAccount,
     normalizePoolMetadata,
     normalizeSettings,
     sortAccountsByWeeklyRule,
@@ -279,18 +280,19 @@ export function useAccounts() {
                         pool,
                     };
                 });
+                const normalizedBaseAccounts = normalizeSingleActiveAccount(baseAccounts);
 
                 if (Object.keys(migratedPoolEntries).length > 0) {
                     updateSettings({ accountPool: migratedPoolEntries });
                 }
-                setAccounts(sortAccountsByWeeklyRule(baseAccounts));
+                setAccounts(sortAccountsByWeeklyRule(normalizedBaseAccounts));
 
                 const loadingMap = Object.fromEntries(
-                    baseAccounts.map((account) => [account.filePath, true]),
+                    normalizedBaseAccounts.map((account) => [account.filePath, true]),
                 ) as Record<string, boolean>;
                 setUsageLoadingByPath(loadingMap);
 
-                await mapWithConcurrency(baseAccounts, USAGE_FETCH_CONCURRENCY, async (account) => {
+                await mapWithConcurrency(normalizedBaseAccounts, USAGE_FETCH_CONCURRENCY, async (account) => {
                     try {
                         const usage = await fetchUsageForAccount(account);
                         const cachedAt = Date.now();
@@ -326,7 +328,7 @@ export function useAccounts() {
                     saveUsageCache(usageCache);
                 }
 
-                const nextAccounts = baseAccounts.map((account) => {
+                const nextAccounts = normalizedBaseAccounts.map((account) => {
                     const usageUpdate = usageUpdatesByPath[account.filePath];
                     if (!usageUpdate) return account;
                     return {
@@ -338,7 +340,7 @@ export function useAccounts() {
                         isTokenExpired: usageUpdate.isTokenExpired,
                     };
                 });
-                setAccounts(sortAccountsByWeeklyRule(nextAccounts));
+                setAccounts(sortAccountsByWeeklyRule(normalizeSingleActiveAccount(nextAccounts)));
             } catch (error) {
                 notifyError(toErrorMessage(error), 'Scan Accounts');
             } finally {

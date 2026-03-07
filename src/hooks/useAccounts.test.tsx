@@ -211,6 +211,68 @@ describe('useAccounts', () => {
     expect(result.current.accounts[0].lastUsageUpdate).toBeUndefined();
   });
 
+  it('normalizes duplicate active flags down to a single active account', async () => {
+    commandsMock.scanAccounts.mockResolvedValue({
+      accountsDir: 'E:/accounts',
+      accounts: [
+        {
+          id: 'one',
+          name: 'One',
+          email: 'one@example.com',
+          planType: 'plus',
+          subscriptionEnd: null,
+          isActive: true,
+          filePath: 'E:/accounts/one.json',
+          authUpdatedAt: 1,
+          lastRefresh: 'now',
+        },
+        {
+          id: 'two',
+          name: 'Two',
+          email: 'two@example.com',
+          planType: 'plus',
+          subscriptionEnd: null,
+          isActive: true,
+          filePath: 'E:/accounts/two.json',
+          authUpdatedAt: 2,
+          lastRefresh: 'now',
+        },
+        {
+          id: 'three',
+          name: 'Three',
+          email: 'three@example.com',
+          planType: 'plus',
+          subscriptionEnd: null,
+          isActive: false,
+          filePath: 'E:/accounts/three.json',
+          authUpdatedAt: 3,
+          lastRefresh: 'now',
+        },
+      ],
+    });
+    commandsMock.fetchActiveUsage.mockResolvedValue({
+      primaryWindow: { usedPercent: 5 },
+      secondaryWindow: { usedPercent: 10 },
+    });
+    commandsMock.fetchUsage.mockResolvedValue({
+      primaryWindow: { usedPercent: 15 },
+      secondaryWindow: { usedPercent: 20 },
+    });
+
+    const { result } = renderHook(() => useAccounts(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.accounts).toHaveLength(3);
+    });
+
+    expect(result.current.accounts.filter((account) => account.isActive)).toHaveLength(1);
+    expect([...result.current.accounts.map((account) => account.filePath)].sort()).toEqual([
+      'E:/accounts/one.json',
+      'E:/accounts/three.json',
+      'E:/accounts/two.json',
+    ]);
+  });
+
   it('rejects competing mutations while one account action is in flight', async () => {
     let resolveSwitch: (() => void) | null = null;
 

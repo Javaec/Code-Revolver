@@ -26,6 +26,26 @@ export function normalizePoolMetadata(metadata?: unknown): AccountPoolMetadata {
   };
 }
 
+export function normalizeSingleActiveAccount(accounts: AccountInfo[]): AccountInfo[] {
+  let hasAssignedActive = false;
+
+  return accounts.map((account) => {
+    if (!account.isActive) {
+      return account;
+    }
+
+    if (!hasAssignedActive) {
+      hasAssignedActive = true;
+      return account;
+    }
+
+    return {
+      ...account,
+      isActive: false,
+    };
+  });
+}
+
 export function normalizeGatewaySettings(gateway?: Partial<GatewaySettings>): GatewaySettings {
   const keepAliveIntervalSec = Number(gateway?.keepAliveIntervalSec ?? DEFAULT_GATEWAY_SETTINGS.keepAliveIntervalSec);
   const safeKeepAlive = Number.isFinite(keepAliveIntervalSec)

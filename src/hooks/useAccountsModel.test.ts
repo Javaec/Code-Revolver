@@ -4,6 +4,7 @@ import {
   ACTIVE_USAGE_STALE_AFTER_MS,
   getRankedSwitchCandidates,
   isUsageFresh,
+  normalizeSingleActiveAccount,
   normalizePoolMetadata,
   sortAccountsByWeeklyRule,
 } from './useAccountsModel';
@@ -129,5 +130,15 @@ describe('useAccountsModel', () => {
     ]);
 
     expect(ranked.map((account) => account.name)).toEqual(['ready']);
+  });
+
+  it('keeps only the first active account flagged as active', () => {
+    const normalized = normalizeSingleActiveAccount([
+      createAccount({ name: 'first', isActive: true }),
+      createAccount({ name: 'second', isActive: true, filePath: 'second.json' }),
+      createAccount({ name: 'third', isActive: false, filePath: 'third.json' }),
+    ]);
+
+    expect(normalized.map((account) => account.isActive)).toEqual([true, false, false]);
   });
 });

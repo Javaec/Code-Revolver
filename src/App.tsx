@@ -134,7 +134,9 @@ function App() {
 
   const visibleInactiveAccounts = useMemo(() => {
     const query = deferredAccountSearchQuery.trim().toLowerCase();
-    const inactiveAccounts = accounts.filter((account) => !account.isActive);
+    const inactiveAccounts = activeAccount
+      ? accounts.filter((account) => account.filePath !== activeAccount.filePath)
+      : accounts;
     const filtered = query.length === 0
       ? inactiveAccounts
       : inactiveAccounts.filter((account) => (
@@ -152,7 +154,7 @@ function App() {
       next.sort((left, right) => (right.pool?.priority ?? 5) - (left.pool?.priority ?? 5));
     }
     return next;
-  }, [accountSortMode, accounts, deferredAccountSearchQuery]);
+  }, [accountSortMode, accounts, activeAccount, deferredAccountSearchQuery]);
 
   const displayedAccountCount = visibleInactiveAccounts.length + (activeAccount ? 1 : 0);
 

@@ -3,13 +3,15 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-pub const APP_CONFIG_VERSION: u32 = 2;
+pub const APP_CONFIG_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub version: u32,
     #[serde(rename = "accountsDir", alias = "accounts_dir")]
     pub accounts_dir: Option<String>,
+    #[serde(default, rename = "activeAccountFile", alias = "active_account_file")]
+    pub active_account_file: Option<String>,
     #[serde(default, rename = "debugLogging", alias = "debug_logging")]
     pub debug_logging: bool,
 }
@@ -19,6 +21,7 @@ impl Default for AppConfig {
         Self {
             version: APP_CONFIG_VERSION,
             accounts_dir: None,
+            active_account_file: None,
             debug_logging: false,
         }
     }
@@ -28,6 +31,8 @@ impl Default for AppConfig {
 struct LegacyAppConfig {
     #[serde(default, rename = "accountsDir", alias = "accounts_dir")]
     accounts_dir: Option<String>,
+    #[serde(default, rename = "activeAccountFile", alias = "active_account_file")]
+    active_account_file: Option<String>,
     #[serde(default, rename = "debugLogging", alias = "debug_logging")]
     debug_logging: bool,
     #[serde(default)]
@@ -50,6 +55,7 @@ fn migrate_config(raw: &str) -> AppConfig {
             Ok(legacy) => AppConfig {
                 version: legacy.version.unwrap_or(APP_CONFIG_VERSION),
                 accounts_dir: legacy.accounts_dir,
+                active_account_file: legacy.active_account_file,
                 debug_logging: legacy.debug_logging,
             },
             Err(_) => AppConfig::default(),
@@ -77,6 +83,7 @@ pub fn save_config(config: &AppConfig) -> AppResult<()> {
     let next = AppConfig {
         version: APP_CONFIG_VERSION,
         accounts_dir: config.accounts_dir.clone(),
+        active_account_file: config.active_account_file.clone(),
         debug_logging: config.debug_logging,
     };
     let content = serde_json::to_string_pretty(&next)

@@ -2,6 +2,7 @@ use crate::account_files::{
     collect_account_files,
     files_have_same_content,
     paths_match,
+    ParsedAccountFile,
     resolve_available_account_target,
     resolve_managed_account_path,
 };
@@ -20,6 +21,49 @@ use crate::{
 use std::fs;
 use std::path::PathBuf;
 
+fn persist_active_account_file(path: Option<&PathBuf>) -> Result<(), String> {
+    let mut config = load_config();
+    config.active_account_file = path.map(|value| value.to_string_lossy().to_string());
+    save_config(&config).map_err(|error| error.message.clone())
+}
+
+fn loaded_active_account_path(accounts_dir: &PathBuf) -> Option<PathBuf> {
+    load_config()
+        .active_account_file
+        .and_then(|value| resolve_managed_account_path(&value, accounts_dir).ok())
+}
+
+fn configured_active_account_path(accounts_dir: &PathBuf, codex_auth: &PathBuf) -> Option<PathBuf> {
+    let configured_path = loaded_active_account_path(accounts_dir)?;
+
+    if !configured_path.exists() || !codex_auth.exists() {
+        return None;
+    }
+
+    Some(configured_path)
+}
+
+fn resolve_active_account_path(
+    account_files: &[ParsedAccountFile],
+    accounts_dir: &PathBuf,
+    codex_auth: &PathBuf,
+) -> Option<PathBuf> {
+    if !codex_auth.exists() {
+        return None;
+    }
+
+    let exact_match = account_files
+        .iter()
+        .find(|file| files_have_same_content(&file.path, codex_auth))
+        .map(|file| file.path.clone());
+
+    if let Some(exact_match_path) = exact_match {
+        return Some(exact_match_path);
+    }
+
+    configured_active_account_path(accounts_dir, codex_auth)
+}
+
 /// Scan accounts directory and return all available accounts
 #[tauri::command]
 pub fn scan_accounts() -> Result<ScanResult, String> {
@@ -31,17 +75,9 @@ pub fn scan_accounts() -> Result<ScanResult, String> {
             .map_err(|e| format!("Failed to create accounts directory: {}", e))?;
     }
 
-    let active_account_id = if codex_auth.exists() {
-        fs::read_to_string(&codex_auth)
-            .ok()
-            .and_then(|content| serde_json::from_str::<CodexAuthFile>(&content).ok())
-            .map(|auth| auth.tokens.account_id)
-    } else {
-        None
-    };
-
     let mut account_files = collect_account_files(&accounts_dir, Some(&codex_auth))?;
     account_files.sort_by(|a, b| a.path.to_string_lossy().cmp(&b.path.to_string_lossy()));
+    let active_account_path = resolve_active_account_path(&account_files, &accounts_dir, &codex_auth);
 
     let accounts = account_files
         .into_iter()
@@ -53,9 +89,9 @@ pub fn scan_accounts() -> Result<ScanResult, String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("Untitled")
                 .to_string();
-            let is_active = active_account_id
+            let is_active = active_account_path
                 .as_ref()
-                .map(|id| id == &file.auth.tokens.account_id)
+                .map(|path| paths_match(&file.path, path))
                 .unwrap_or(false);
 
             AccountInfo {
@@ -95,6 +131,7 @@ pub fn switch_account(file_path: String) -> Result<(), String> {
     }
 
     fs::copy(&source, &target).map_err(|e| format!("Failed to copy authentication file: {}", e))?;
+    persist_active_account_file(Some(&source))?;
     Ok(())
 }
 
@@ -196,6 +233,11 @@ pub fn set_accounts_dir(path: String) -> Result<(), String> {
 
     let mut config = load_config();
     config.accounts_dir = Some(path.clone());
+    if let Some(active_path) = config.active_account_file.clone() {
+        if resolve_managed_account_path(&active_path, &old_dir).is_ok() {
+            config.active_account_file = None;
+        }
+    }
     save_config(&config).map_err(|e| e.message.clone())?;
 
     if !paths_match(&old_dir, &new_dir) && old_dir.exists() {
@@ -240,11 +282,14 @@ pub fn set_accounts_dir(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn rename_account(old_path: String, new_name: String) -> Result<(), String> {
-    let source = resolve_managed_account_path(&old_path, &get_accounts_dir())?;
+    let accounts_dir = get_accounts_dir();
+    let source = resolve_managed_account_path(&old_path, &accounts_dir)?;
     if !source.exists() {
         return Err("Source file does not exist".to_string());
     }
 
+    let was_active = loaded_active_account_path(&accounts_dir)
+        .is_some_and(|active_path| paths_match(&active_path, &source));
     let parent = source.parent().ok_or("Invalid path")?;
     let target = parent.join(format!("{}.json", new_name));
 
@@ -252,7 +297,10 @@ pub fn rename_account(old_path: String, new_name: String) -> Result<(), String> 
         return Err("Target name already exists".to_string());
     }
 
-    fs::rename(source, target).map_err(|e| format!("Failed to rename: {}", e))?;
+    fs::rename(&source, &target).map_err(|e| format!("Failed to rename: {}", e))?;
+    if was_active {
+        persist_active_account_file(Some(&target))?;
+    }
     Ok(())
 }
 
@@ -327,11 +375,17 @@ pub fn add_account(name: String, content: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn delete_account(file_path: String) -> Result<(), String> {
-    let path = resolve_managed_account_path(&file_path, &get_accounts_dir())?;
+    let accounts_dir = get_accounts_dir();
+    let path = resolve_managed_account_path(&file_path, &accounts_dir)?;
     if !path.exists() {
         return Err("Account file not found".to_string());
     }
 
-    fs::remove_file(path).map_err(|e| format!("Failed to delete account: {}", e))?;
+    let was_active = loaded_active_account_path(&accounts_dir)
+        .is_some_and(|active_path| paths_match(&active_path, &path));
+    fs::remove_file(&path).map_err(|e| format!("Failed to delete account: {}", e))?;
+    if was_active {
+        persist_active_account_file(None)?;
+    }
     Ok(())
 }
