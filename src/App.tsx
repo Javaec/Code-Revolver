@@ -127,11 +127,17 @@ function App() {
     updateAccountPoolMetadata(accountId, metadata);
   };
 
-  const visibleAccounts = useMemo(() => {
+  const activeAccount = useMemo(
+    () => accounts.find((account) => account.isActive) ?? null,
+    [accounts],
+  );
+
+  const visibleInactiveAccounts = useMemo(() => {
     const query = deferredAccountSearchQuery.trim().toLowerCase();
+    const inactiveAccounts = accounts.filter((account) => !account.isActive);
     const filtered = query.length === 0
-      ? accounts
-      : accounts.filter((account) => (
+      ? inactiveAccounts
+      : inactiveAccounts.filter((account) => (
         account.name.toLowerCase().includes(query)
         || account.email.toLowerCase().includes(query)
         || account.planType.toLowerCase().includes(query)
@@ -147,6 +153,8 @@ function App() {
     }
     return next;
   }, [accountSortMode, accounts, deferredAccountSearchQuery]);
+
+  const displayedAccountCount = visibleInactiveAccounts.length + (activeAccount ? 1 : 0);
 
   return (
     <div className="min-h-screen text-slate-200 p-4 sm:p-6 font-sans selection:bg-primary-500/30">
@@ -236,14 +244,15 @@ function App() {
                     <div>
                       <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Account Toolbar</div>
                       <div className="mt-1 text-xs text-slate-400">
-                        Showing {visibleAccounts.length} of {accounts.length} accounts
+                        Showing {displayedAccountCount} of {accounts.length} accounts
+                        {activeAccount ? ' • active profile pinned above the list' : ''}
                       </div>
                     </div>
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                       <Input
                         value={accountSearchQuery}
                         onChange={(event) => setAccountSearchQuery(event.target.value)}
-                        placeholder="Search accounts by name, email, or plan..."
+                        placeholder="Search other accounts by name, email, or plan..."
                         className="h-9 w-full text-sm sm:w-72"
                       />
                       <select
@@ -302,41 +311,86 @@ function App() {
                   </motion.div>
                 ) : (
                   <div className="space-y-2">
-                    <AnimatePresence initial={false}>
-                      {visibleAccounts.map((account, index) => (
-                        <motion.div
-                          key={account.filePath}
-                          layout
-                          style={{ contentVisibility: 'auto', containIntrinsicSize: '160px' }}
-                          initial={{ opacity: 0, y: 12 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -12 }}
-                          transition={{ 
-                            type: 'spring', 
-                            stiffness: 320, 
-                            damping: 28, 
-                            mass: 0.9,
-                            delay: index * 0.05
-                          }}
-                        >
-                          <AccountCard
-                            account={account}
-                            onSwitch={() => switchAccount(account.filePath)}
-                            onEdit={() => setEditingAccount(account)}
-                            onEditPool={() => setPoolEditingAccount(account)}
-                            onDelete={() => deleteAccount(account.filePath)}
-                            onRefreshToken={() => refreshAccountToken(account.filePath)}
-                            renameAccount={renameAccount}
-                            isBestCandidate={account.filePath === bestCandidateFilePath}
-                            isPrivacyMode={isPrivacyMode}
-                            isUsageLoading={usageLoadingByPath[account.filePath] ?? false}
-                            isMutationLocked={!!activeAccountMutation}
-                            activeMutationKind={activeAccountMutation?.filePath === account.filePath ? activeAccountMutation.kind : null}
-                            clockTickMs={clockTickMs}
-                          />
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
+                    {activeAccount && (
+                      <div className="space-y-2 mb-3">
+                        <div className="px-1">
+                          <div className="text-[11px] uppercase tracking-[0.16em] text-primary-300">Active Profile</div>
+                          <div className="mt-1 text-xs text-slate-500">This is the only highlighted card and the profile wired into the live Codex session.</div>
+                        </div>
+                        <AccountCard
+                          account={activeAccount}
+                          onSwitch={() => switchAccount(activeAccount.filePath)}
+                          onEdit={() => setEditingAccount(activeAccount)}
+                          onEditPool={() => setPoolEditingAccount(activeAccount)}
+                          onDelete={() => deleteAccount(activeAccount.filePath)}
+                          onRefreshToken={() => refreshAccountToken(activeAccount.filePath)}
+                          renameAccount={renameAccount}
+                          isBestCandidate={false}
+                          isPrivacyMode={isPrivacyMode}
+                          isUsageLoading={usageLoadingByPath[activeAccount.filePath] ?? false}
+                          isMutationLocked={!!activeAccountMutation}
+                          activeMutationKind={activeAccountMutation?.filePath === activeAccount.filePath ? activeAccountMutation.kind : null}
+                          clockTickMs={clockTickMs}
+                        />
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <div className="px-1 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                            {activeAccount ? 'Other Profiles' : 'Profiles'}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {visibleInactiveAccounts.length} profile{visibleInactiveAccounts.length === 1 ? '' : 's'} ready for review or switching
+                          </div>
+                        </div>
+                      </div>
+
+                      {visibleInactiveAccounts.length === 0 ? (
+                        <Card className="border-white/10 bg-slate-950/35 px-4 py-5 text-sm text-slate-400">
+                          {accounts.length === 0
+                            ? 'No profiles loaded yet.'
+                            : 'No inactive profiles match the current search.'}
+                        </Card>
+                      ) : (
+                        <AnimatePresence initial={false}>
+                          {visibleInactiveAccounts.map((account, index) => (
+                            <motion.div
+                              key={account.filePath}
+                              layout
+                              style={{ contentVisibility: 'auto', containIntrinsicSize: '160px' }}
+                              initial={{ opacity: 0, y: 12 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -12 }}
+                              transition={{
+                                type: 'spring',
+                                stiffness: 320,
+                                damping: 28,
+                                mass: 0.9,
+                                delay: index * 0.05
+                              }}
+                            >
+                              <AccountCard
+                                account={account}
+                                onSwitch={() => switchAccount(account.filePath)}
+                                onEdit={() => setEditingAccount(account)}
+                                onEditPool={() => setPoolEditingAccount(account)}
+                                onDelete={() => deleteAccount(account.filePath)}
+                                onRefreshToken={() => refreshAccountToken(account.filePath)}
+                                renameAccount={renameAccount}
+                                isBestCandidate={account.filePath === bestCandidateFilePath}
+                                isPrivacyMode={isPrivacyMode}
+                                isUsageLoading={usageLoadingByPath[account.filePath] ?? false}
+                                isMutationLocked={!!activeAccountMutation}
+                                activeMutationKind={activeAccountMutation?.filePath === account.filePath ? activeAccountMutation.kind : null}
+                                clockTickMs={clockTickMs}
+                              />
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
+                      )}
+                    </div>
                   </div>
                 )}
               </motion.div>

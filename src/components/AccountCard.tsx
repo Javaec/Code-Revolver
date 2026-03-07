@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { AccountInfo, MutationResult } from '../types';
 import { Badge, Button, Card, Input, LinearProgress } from './ui';
-import { getAccountCardVariant, getPlanBadgeClasses } from '../utils/account';
+import { getPlanBadgeClasses } from '../utils/account';
 import { formatRelativeTime } from '../utils/progress';
 import { confirmAction } from '../lib/dialogs';
 import { useNotifications } from '../lib/notificationState';
@@ -45,13 +45,10 @@ export function AccountCard({
 
   const isTokenExpired = account.isTokenExpired;
   const isRefreshingToken = activeMutationKind === 'refresh-token';
-  const cardVariant = getAccountCardVariant(account.isActive, !!isTokenExpired);
   const planBadge = getPlanBadgeClasses(account.planType);
-  const cardClasses = cardVariant === 'danger'
-    ? 'border-rose-500/35 bg-gradient-to-r from-rose-900/20 to-slate-900/50'
-    : cardVariant === 'active'
-      ? 'border-primary-400/45 shadow-glow bg-gradient-to-r from-primary-900/20 to-slate-900/50'
-      : 'border-white/15 bg-gradient-to-r from-slate-900/45 to-slate-900/60';
+  const cardClasses = account.isActive
+    ? 'border-primary-400/45 shadow-glow bg-gradient-to-r from-primary-950/40 to-slate-900/60'
+    : 'border-white/12 bg-slate-900/55';
 
   const formatSubscription = (date: string | null) => {
     if (!date) return 'Unknown';
@@ -66,7 +63,7 @@ export function AccountCard({
   };
 
   const formatQueryTime = (timestamp?: number) => {
-    if (!timestamp) return 'Never queried';
+    if (!timestamp) return 'No usage snapshot';
     const d = new Date(timestamp);
     return d.toLocaleString('en-US', {
       hour12: false,
@@ -96,6 +93,13 @@ export function AccountCard({
   const expireElapsed = Math.max(0, clockTickMs - authUpdatedAtMs);
   const expirePercent = Math.min(100, Math.max(0, (expireElapsed / EXPIRE_WINDOW_MS) * 100));
   const needsRelogin = expirePercent >= 95;
+  const primaryUsage = account.usage?.primaryWindow?.usedPercent;
+  const secondaryUsage = account.usage?.secondaryWindow?.usedPercent;
+
+  const formatResetLabel = (resetAt?: number) => {
+    if (!resetAt) return isUsageLoading ? 'Refreshing usage...' : 'No reset data';
+    return formatRelativeTime(resetAt, clockTickMs);
+  };
 
   const handleRename = async () => {
     if (isMutationLocked) return;
@@ -167,14 +171,6 @@ export function AccountCard({
     >
       {/* Header Row: Name + Badges */}
       <div className="flex items-center gap-1.5 flex-wrap mb-2">
-        {account.isActive && (
-          <motion.span
-            className="w-2 h-2 rounded-full bg-primary-500 shadow-glow"
-            animate={{ scale: [1, 1.2, 1], opacity: [1, 0.8, 1] }}
-            transition={{ duration: 2, repeat: Infinity }}
-          />
-        )}
-
         {isEditing ? (
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
             <Input
@@ -202,6 +198,17 @@ export function AccountCard({
               {account.name}
             </h3>
           </div>
+        )}
+
+        {account.isActive && (
+          <motion.span
+            className="inline-flex items-center gap-1 rounded-md border border-primary-400/30 bg-primary-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary-200"
+            animate={{ opacity: [1, 0.8, 1] }}
+            transition={{ duration: 1.8, repeat: Infinity }}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-primary-400" />
+            Active
+          </motion.span>
         )}
 
         <Badge className={`px-1.5 py-0.5 text-[9px] rounded-md font-bold border ${planBadge.classes}`}>
@@ -234,27 +241,19 @@ export function AccountCard({
         )}
 
         {isBestCandidate && !account.isActive && (
-          <motion.span
-            className="px-1.5 py-0.5 text-[10px] rounded-md font-bold bg-gradient-to-r from-amber-500/30 to-amber-600/20 text-amber-400 border border-amber-500/30 flex items-center gap-0.5"
-            animate={{ scale: [1, 1.02, 1] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-          >
+          <span className="px-1.5 py-0.5 text-[10px] rounded-md font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/25 flex items-center gap-0.5">
             <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
-            Best
-          </motion.span>
+            Recommended
+          </span>
         )}
 
         {isTokenExpired && (
-          <motion.span
-            className="px-1.5 py-0.5 text-[10px] rounded-md font-medium bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-0.5"
-            animate={{ opacity: [1, 0.7, 1] }}
-            transition={{ duration: 1, repeat: Infinity }}
-          >
+          <span className="px-1.5 py-0.5 text-[10px] rounded-md font-medium bg-rose-500/15 text-rose-300 border border-rose-500/20 flex items-center gap-0.5">
             <span className="w-1 h-1 rounded-full bg-rose-500" />
             Expired
-          </motion.span>
+          </span>
         )}
 
         {activeMutationKind && (
@@ -283,6 +282,12 @@ export function AccountCard({
               {formatSubscription(account.subscriptionEnd)}
             </span>
           </div>
+
+          {account.isActive && (
+            <div className="rounded-md border border-primary-400/15 bg-primary-500/5 px-2 py-1 text-[10px] text-primary-100">
+              This profile drives the live Codex session.
+            </div>
+          )}
         </div>
 
         {/* Center: Timing */}
@@ -291,7 +296,9 @@ export function AccountCard({
             <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span className="text-[11px] truncate">{formatQueryTime(account.lastUsageUpdate)}</span>
+            <span className="text-[11px] truncate">
+              {isUsageLoading ? 'Refreshing usage...' : formatQueryTime(account.lastUsageUpdate)}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -317,14 +324,16 @@ export function AccountCard({
         <div className="flex items-start gap-3 flex-shrink-0">
           <div className="flex flex-col gap-2 w-40">
             <LinearProgress
-              value={account.usage?.primaryWindow?.usedPercent ?? 0}
+              value={primaryUsage}
               label="5H Limit"
-              subLabel={formatRelativeTime(account.usage?.primaryWindow?.resetsAt, clockTickMs)}
+              subLabel={formatResetLabel(account.usage?.primaryWindow?.resetsAt)}
+              emptyLabel="--"
             />
             <LinearProgress
-              value={account.usage?.secondaryWindow?.usedPercent ?? 0}
+              value={secondaryUsage}
               label="Weekly"
-              subLabel={formatRelativeTime(account.usage?.secondaryWindow?.resetsAt, clockTickMs)}
+              subLabel={formatResetLabel(account.usage?.secondaryWindow?.resetsAt)}
+              emptyLabel="--"
             />
           </div>
 

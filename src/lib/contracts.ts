@@ -11,6 +11,37 @@ function normalizeNumber(value: unknown): number | undefined {
   return Number.isFinite(numeric) ? numeric : undefined;
 }
 
+function clampPercent(value: unknown): number | undefined {
+  const numeric = normalizeNumber(value);
+  if (numeric === undefined) {
+    return undefined;
+  }
+
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function normalizeUsageWindow(
+  window: UsageInfo['primaryWindow'] | UsageInfo['secondaryWindow'] | undefined,
+): UsageInfo['primaryWindow'] | undefined {
+  if (!window) {
+    return undefined;
+  }
+
+  const usedPercent = clampPercent(window.usedPercent);
+  const windowMinutes = normalizeNumber(window.windowMinutes);
+  const resetsAt = normalizeNumber(window.resetsAt);
+
+  if (usedPercent === undefined && windowMinutes === undefined && resetsAt === undefined) {
+    return undefined;
+  }
+
+  return {
+    usedPercent: usedPercent ?? 0,
+    windowMinutes,
+    resetsAt,
+  };
+}
+
 export function normalizeBackendAppConfig(value: BackendAppConfig): BackendAppConfig {
   return {
     version: normalizeNumber(value.version) ?? 1,
@@ -22,16 +53,8 @@ export function normalizeBackendAppConfig(value: BackendAppConfig): BackendAppCo
 export function normalizeUsageInfo(value: UsageInfo): UsageInfo {
   return {
     planType: typeof value.planType === 'string' ? value.planType : undefined,
-    primaryWindow: value.primaryWindow ? {
-      usedPercent: normalizeNumber(value.primaryWindow.usedPercent) ?? 0,
-      windowMinutes: normalizeNumber(value.primaryWindow.windowMinutes),
-      resetsAt: normalizeNumber(value.primaryWindow.resetsAt),
-    } : undefined,
-    secondaryWindow: value.secondaryWindow ? {
-      usedPercent: normalizeNumber(value.secondaryWindow.usedPercent) ?? 0,
-      windowMinutes: normalizeNumber(value.secondaryWindow.windowMinutes),
-      resetsAt: normalizeNumber(value.secondaryWindow.resetsAt),
-    } : undefined,
+    primaryWindow: normalizeUsageWindow(value.primaryWindow),
+    secondaryWindow: normalizeUsageWindow(value.secondaryWindow),
   };
 }
 

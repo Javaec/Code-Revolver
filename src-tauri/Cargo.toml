@@ -36,3 +36,15 @@ sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
+
+[profile.dev]
+debug = 0
+incremental = true
+
+[profile.test]
+debug = 0
+incremental = true
+
+[profile.release]
+incremental = true
+codegen-units = 64

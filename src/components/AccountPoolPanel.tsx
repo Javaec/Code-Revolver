@@ -24,6 +24,11 @@ function getUsageValue(value: number | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function formatUsageLabel(value: number | undefined): string {
+  const usage = getUsageValue(value);
+  return usage === null ? '--' : `${Math.round(usage)}%`;
+}
+
 export function AccountPoolPanel({
   accounts,
   rankedCandidates,
@@ -132,7 +137,7 @@ export function AccountPoolPanel({
                       #{index + 1} {candidate.name}
                     </div>
                     <div className="text-[11px] text-slate-400 truncate">
-                      Priority {candidate.pool?.priority ?? 5} | 5H {Math.round(candidate.usage?.primaryWindow?.usedPercent ?? 0)}% | 7D {Math.round(candidate.usage?.secondaryWindow?.usedPercent ?? 0)}%
+                      Priority {candidate.pool?.priority ?? 5} | 5H {formatUsageLabel(candidate.usage?.primaryWindow?.usedPercent)} | 7D {formatUsageLabel(candidate.usage?.secondaryWindow?.usedPercent)}
                     </div>
                   </div>
                   <Button

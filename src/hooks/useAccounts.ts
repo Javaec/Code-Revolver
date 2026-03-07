@@ -8,7 +8,10 @@ import {
     AccountPoolMetadata,
 } from '../types';
 import {
-    calculateSwitchScore,
+    ACTIVE_USAGE_STALE_AFTER_MS,
+    getRankedSwitchCandidates,
+    isUsageAtOrAboveLimit,
+    isUsageFresh,
     normalizePoolMetadata,
     normalizeSettings,
     sortAccountsByWeeklyRule,
@@ -26,6 +29,12 @@ type AccountMutationKind = 'switch' | 'rename' | 'delete' | 'refresh-token';
 type FailedMutation =
     | { kind: 'switch' | 'delete' | 'refresh-token'; filePath: string; message: string }
     | { kind: 'rename'; filePath: string; newName: string; message: string };
+
+type UsageSnapshotUpdate = {
+    usage?: UsageInfo;
+    cachedAt?: number;
+    isTokenExpired: boolean;
+};
 
 const USAGE_FETCH_CONCURRENCY = 4;
 const ACTIVE_ACCOUNT_USAGE_POLL_MS = 20_000;
@@ -136,16 +145,24 @@ export function useAccounts() {
         return await commands.fetchActiveUsage();
     }, []);
 
+    const fetchUsageForAccount = useCallback(async (account: AccountInfo): Promise<UsageInfo> => {
+        if (!account.isActive) {
+            return await fetchUsage(account.filePath);
+        }
+
+        try {
+            return await fetchActiveUsage();
+        } catch {
+            return await fetchUsage(account.filePath);
+        }
+    }, [fetchActiveUsage, fetchUsage]);
+
     const applyUsageSnapshot = useCallback((
         filePath: string,
-        update: {
-            usage?: UsageInfo;
-            cachedAt: number;
-            isTokenExpired: boolean;
-        },
+        update: UsageSnapshotUpdate,
         options?: { persistCache?: boolean },
     ) => {
-        if (update.usage) {
+        if (update.usage && typeof update.cachedAt === 'number') {
             usageCacheRef.current[filePath] = {
                 usage: update.usage,
                 cachedAt: update.cachedAt,
@@ -160,7 +177,7 @@ export function useAccounts() {
                 ? {
                     ...account,
                     usage: update.usage ?? account.usage,
-                    lastUsageUpdate: update.cachedAt,
+                    lastUsageUpdate: typeof update.cachedAt === 'number' ? update.cachedAt : account.lastUsageUpdate,
                     isTokenExpired: update.isTokenExpired,
                 }
                 : account
@@ -193,7 +210,7 @@ export function useAccounts() {
             const cached = usageCacheRef.current[filePath];
             applyUsageSnapshot(filePath, {
                 usage: cached?.usage,
-                cachedAt: cached?.cachedAt ?? Date.now(),
+                cachedAt: cached?.cachedAt,
                 isTokenExpired: isExpired,
             }, { persistCache: false });
             return false;
@@ -239,11 +256,7 @@ export function useAccounts() {
                 const result = await commands.scanAccounts();
                 const usageCache = usageCacheRef.current;
                 const accountPool = settingsRef.current.accountPool;
-                const usageUpdatesByPath: Record<string, {
-                    usage?: UsageInfo;
-                    cachedAt: number;
-                    isTokenExpired: boolean;
-                }> = {};
+                const usageUpdatesByPath: Record<string, UsageSnapshotUpdate> = {};
                 let usageCacheChanged = false;
 
                 setAccountsDirState(result.accountsDir);
@@ -261,7 +274,7 @@ export function useAccounts() {
                     return {
                         ...account,
                         usage: cached?.usage,
-                        lastUsageUpdate: cached?.cachedAt ?? Date.now(),
+                        lastUsageUpdate: cached?.cachedAt,
                         isTokenExpired: false,
                         pool,
                     };
@@ -279,7 +292,7 @@ export function useAccounts() {
 
                 await mapWithConcurrency(baseAccounts, USAGE_FETCH_CONCURRENCY, async (account) => {
                     try {
-                        const usage = await fetchUsage(account.filePath);
+                        const usage = await fetchUsageForAccount(account);
                         const cachedAt = Date.now();
                         usageCache[account.filePath] = {
                             usage,
@@ -300,7 +313,7 @@ export function useAccounts() {
                         const cached = usageCache[account.filePath];
                         usageUpdatesByPath[account.filePath] = {
                             usage: cached?.usage,
-                            cachedAt: cached?.cachedAt ?? Date.now(),
+                            cachedAt: cached?.cachedAt,
                             isTokenExpired: isExpired,
                         };
                     } finally {
@@ -319,7 +332,9 @@ export function useAccounts() {
                     return {
                         ...account,
                         usage: usageUpdate.usage,
-                        lastUsageUpdate: usageUpdate.cachedAt,
+                        lastUsageUpdate: typeof usageUpdate.cachedAt === 'number'
+                            ? usageUpdate.cachedAt
+                            : account.lastUsageUpdate,
                         isTokenExpired: usageUpdate.isTokenExpired,
                     };
                 });
@@ -341,7 +356,7 @@ export function useAccounts() {
 
         refreshInFlightRef.current = refreshPromise;
         return refreshPromise;
-    }, [fetchUsage, notifyError, updateSettings]);
+    }, [fetchUsageForAccount, notifyError, updateSettings]);
 
     const switchAccount = useCallback(async (filePath: string): Promise<MutationResult> => {
         const previousAccounts = accounts;
@@ -376,26 +391,18 @@ export function useAccounts() {
 
         const threshold = Math.max(1, Math.min(50, settings.autoSwitchThreshold || DEFAULT_SETTINGS.autoSwitchThreshold));
         const usedPercentLimit = 100 - threshold;
+        const nowMs = Date.now();
 
         // Determine if the current account needs to be switched
         const isExpired = activeAccount.isTokenExpired;
-        const isPrimaryFull = (activeAccount.usage?.primaryWindow?.usedPercent || 0) >= usedPercentLimit;
-        const isSecondaryFull = (activeAccount.usage?.secondaryWindow?.usedPercent || 0) >= usedPercentLimit;
+        const activeUsageFresh = isUsageFresh(activeAccount, nowMs, ACTIVE_USAGE_STALE_AFTER_MS);
+        const isPrimaryFull = activeUsageFresh && isUsageAtOrAboveLimit(activeAccount, 'primary', usedPercentLimit);
+        const isSecondaryFull = activeUsageFresh && isUsageAtOrAboveLimit(activeAccount, 'secondary', usedPercentLimit);
 
         if (isExpired || isPrimaryFull || isSecondaryFull) {
-            // Filter candidate accounts
-            const candidates = currentAccounts.filter(acc => {
-                if (acc.isActive) return false; // Exclude self
-                if (acc.isTokenExpired) return false; // Exclude expired
-                if ((acc.usage?.primaryWindow?.usedPercent || 0) >= usedPercentLimit) return false; // Exclude full
-                if ((acc.usage?.secondaryWindow?.usedPercent || 0) >= usedPercentLimit) return false; // Exclude full
-                return true;
-            });
+            const candidates = getRankedSwitchCandidates(currentAccounts, usedPercentLimit, nowMs);
 
             if (candidates.length === 0) return;
-
-            // Ranking algorithm: prioritize metadata priority, then lower usage, then faster resets
-            candidates.sort((a, b) => calculateSwitchScore(b) - calculateSwitchScore(a));
 
             const bestAccount = candidates[0];
             autoSwitchInFlightRef.current = true;
@@ -409,33 +416,12 @@ export function useAccounts() {
 
     // Calculate Best Candidate account
     const bestCandidateFilePath = useMemo(() => {
-        const candidates = accounts.filter(acc => {
-            if (acc.isTokenExpired) return false;
-            // Strict usage check. If account is > 99%, we probably shouldn't count it as "Best" available.
-            if ((acc.usage?.primaryWindow?.usedPercent || 0) >= 99) return false;
-            if ((acc.usage?.secondaryWindow?.usedPercent || 0) >= 99) return false;
-            return true;
-        });
-
-        if (candidates.length === 0) return null;
-
-        candidates.sort((a, b) => calculateSwitchScore(b) - calculateSwitchScore(a));
-
-        return candidates[0].filePath;
+        const bestCandidate = getRankedSwitchCandidates(accounts, 99)[0];
+        return bestCandidate?.filePath ?? null;
     }, [accounts]);
 
     const rankedCandidates = useMemo(() => {
-        const candidates = accounts.filter(acc => {
-            if (acc.isTokenExpired) return false;
-            if (acc.isActive) return false;
-            if ((acc.usage?.primaryWindow?.usedPercent || 0) >= 99) return false;
-            if ((acc.usage?.secondaryWindow?.usedPercent || 0) >= 99) return false;
-            return true;
-        });
-
-        return candidates
-            .sort((a, b) => calculateSwitchScore(b) - calculateSwitchScore(a))
-            .slice(0, 4);
+        return getRankedSwitchCandidates(accounts, 99).slice(0, 4);
     }, [accounts]);
 
     useEffect(() => {

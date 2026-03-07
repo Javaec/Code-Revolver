@@ -83,6 +83,81 @@ export function calculateSwitchScore(account: AccountInfo): number {
   return priority * 1000 + usageScore * 5 - resetPenalty;
 }
 
+export const ACTIVE_USAGE_STALE_AFTER_MS = 5 * 60 * 1000;
+export const CANDIDATE_USAGE_STALE_AFTER_MS = 90 * 60 * 1000;
+
+function normalizeUsagePercent(value: number | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(100, value));
+}
+
+export function hasUsageSnapshot(account: AccountInfo): boolean {
+  return Boolean(account.usage?.primaryWindow || account.usage?.secondaryWindow);
+}
+
+export function isUsageFresh(
+  account: AccountInfo,
+  nowMs = Date.now(),
+  maxAgeMs = CANDIDATE_USAGE_STALE_AFTER_MS,
+): boolean {
+  if (!hasUsageSnapshot(account)) {
+    return false;
+  }
+
+  if (typeof account.lastUsageUpdate !== 'number' || !Number.isFinite(account.lastUsageUpdate)) {
+    return false;
+  }
+
+  return nowMs - account.lastUsageUpdate <= maxAgeMs;
+}
+
+export function isUsageAtOrAboveLimit(
+  account: AccountInfo,
+  window: 'primary' | 'secondary',
+  threshold: number,
+): boolean {
+  const usedPercent = window === 'primary'
+    ? normalizeUsagePercent(account.usage?.primaryWindow?.usedPercent)
+    : normalizeUsagePercent(account.usage?.secondaryWindow?.usedPercent);
+
+  if (usedPercent === null) {
+    return false;
+  }
+
+  return usedPercent >= threshold;
+}
+
+export function getRankedSwitchCandidates(
+  accounts: AccountInfo[],
+  usedPercentLimit = 99,
+  nowMs = Date.now(),
+): AccountInfo[] {
+  return accounts
+    .filter((account) => {
+      if (account.isActive || account.isTokenExpired) {
+        return false;
+      }
+
+      if (!isUsageFresh(account, nowMs, CANDIDATE_USAGE_STALE_AFTER_MS)) {
+        return false;
+      }
+
+      if (isUsageAtOrAboveLimit(account, 'primary', usedPercentLimit)) {
+        return false;
+      }
+
+      if (isUsageAtOrAboveLimit(account, 'secondary', usedPercentLimit)) {
+        return false;
+      }
+
+      return true;
+    })
+    .sort((left, right) => calculateSwitchScore(right) - calculateSwitchScore(left));
+}
+
 function getWeeklyUsagePercent(account: AccountInfo): number {
   return account.usage?.secondaryWindow?.usedPercent ?? 100;
 }

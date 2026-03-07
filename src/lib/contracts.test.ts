@@ -24,6 +24,17 @@ describe('contracts', () => {
     });
   });
 
+  it('clamps usage percentages and drops empty windows', () => {
+    expect(normalizeUsageInfo({
+      primaryWindow: { usedPercent: 150, resetsAt: undefined, windowMinutes: undefined },
+      secondaryWindow: { usedPercent: Number.NaN, resetsAt: undefined, windowMinutes: undefined },
+    })).toEqual({
+      primaryWindow: { usedPercent: 100, resetsAt: undefined, windowMinutes: undefined },
+      secondaryWindow: undefined,
+      planType: undefined,
+    });
+  });
+
   it('normalizes sync preview and result collections', () => {
     expect(normalizeSyncPreview({
       items: [{ name: 'a', type: 'account', action: 'upload', localTime: 1, remoteTime: 2 }],

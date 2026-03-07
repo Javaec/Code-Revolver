@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountInfo } from '../types';
-import { normalizePoolMetadata, sortAccountsByWeeklyRule } from './useAccountsModel';
+import {
+  ACTIVE_USAGE_STALE_AFTER_MS,
+  getRankedSwitchCandidates,
+  isUsageFresh,
+  normalizePoolMetadata,
+  sortAccountsByWeeklyRule,
+} from './useAccountsModel';
 
 function createAccount(overrides: Partial<AccountInfo>): AccountInfo {
   return {
@@ -64,5 +70,64 @@ describe('useAccountsModel', () => {
     ]);
 
     expect(sorted.map((account) => account.name)).toEqual(['sooner-reset', 'later-reset']);
+  });
+
+  it('treats accounts without a recent usage snapshot as stale', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+    const staleAccount = createAccount({
+      usage: { primaryWindow: { usedPercent: 25 } },
+      lastUsageUpdate: 1_700_000_000_000 - ACTIVE_USAGE_STALE_AFTER_MS - 1,
+    });
+
+    const freshAccount = createAccount({
+      usage: { primaryWindow: { usedPercent: 25 } },
+      lastUsageUpdate: 1_700_000_000_000 - 60_000,
+    });
+
+    expect(isUsageFresh(staleAccount, Date.now(), ACTIVE_USAGE_STALE_AFTER_MS)).toBe(false);
+    expect(isUsageFresh(freshAccount, Date.now(), ACTIVE_USAGE_STALE_AFTER_MS)).toBe(true);
+  });
+
+  it('only ranks non-active candidates with fresh usage under the threshold', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+    const ranked = getRankedSwitchCandidates([
+      createAccount({
+        name: 'active',
+        isActive: true,
+        usage: {
+          primaryWindow: { usedPercent: 10 },
+          secondaryWindow: { usedPercent: 10, resetsAt: 1_700_100_000 },
+        },
+        lastUsageUpdate: 1_700_000_000_000 - 30_000,
+      }),
+      createAccount({
+        name: 'stale',
+        usage: {
+          primaryWindow: { usedPercent: 10 },
+          secondaryWindow: { usedPercent: 10, resetsAt: 1_700_100_000 },
+        },
+        lastUsageUpdate: 1_700_000_000_000 - (91 * 60 * 1000),
+      }),
+      createAccount({
+        name: 'full',
+        usage: {
+          primaryWindow: { usedPercent: 99 },
+          secondaryWindow: { usedPercent: 10, resetsAt: 1_700_100_000 },
+        },
+        lastUsageUpdate: 1_700_000_000_000 - 30_000,
+      }),
+      createAccount({
+        name: 'ready',
+        usage: {
+          primaryWindow: { usedPercent: 20 },
+          secondaryWindow: { usedPercent: 15, resetsAt: 1_700_100_000 },
+        },
+        lastUsageUpdate: 1_700_000_000_000 - 30_000,
+      }),
+    ]);
+
+    expect(ranked.map((account) => account.name)).toEqual(['ready']);
   });
 });
